@@ -1,4 +1,4 @@
-package ru.ravel.rcriflayouttool.model.properties
+package ru.ravel.rcriflayouttool.model.procedureproperties
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty

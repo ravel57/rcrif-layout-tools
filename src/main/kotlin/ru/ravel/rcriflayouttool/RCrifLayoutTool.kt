@@ -16,9 +16,11 @@ import javafx.stage.DirectoryChooser
 import javafx.stage.Stage
 import javafx.util.Callback
 import ru.ravel.rcriflayouttool.model.ParamRow
+import ru.ravel.rcriflayouttool.model.connectorproperties.DataSourceActivityDefinition
 import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
-import ru.ravel.rcriflayouttool.model.properties.ProcedureCallActivityDefinition
+import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
 import java.io.File
+import java.util.*
 
 
 class RCrifLayoutTool : Application() {
@@ -30,23 +32,26 @@ class RCrifLayoutTool : Application() {
 		val allProcedures = FXCollections.observableArrayList<String>()
 		val filteredProcedures = FilteredList(allProcedures) { true }
 
+		val allConnectors = FXCollections.observableArrayList<String>()
+		val filteredConnectors = FilteredList(allConnectors) { true }
+
 		val folderField = TextField().apply {
 			isEditable = false
 			promptText = "Рабочая папка кредитного процесса"
 		}
 
-
-		val fieldCol = TableColumn<ParamRow, String>("Название в процессе").apply {
+		/* Поиск процедур */
+		val searchProcedureTableColumn = TableColumn<ParamRow, String>("Название в процессе").apply {
 			cellValueFactory = Callback { it.value.field }
 			isEditable = true
 		}
-		val tableView = TableView<ParamRow>().apply {
-			columns.addAll(fieldCol)
+		val searchProcedureTableView = TableView<ParamRow>().apply {
+			columns.addAll(searchProcedureTableColumn)
 			isEditable = true
 		}
-		fieldCol.prefWidthProperty().bind(tableView.widthProperty().subtract(2))
+		searchProcedureTableColumn.prefWidthProperty().bind(searchProcedureTableView.widthProperty().subtract(2))
 
-		val procedureBox = ComboBox(filteredProcedures).apply {
+		val procedureComboBox = ComboBox(filteredProcedures).apply {
 			isEditable = true
 			promptText = "Название процедуры"
 			var guard = false
@@ -74,8 +79,10 @@ class RCrifLayoutTool : Application() {
 						filteredProcedures.setPredicate { true }
 						editor.text = newVal
 						hide()
-						tableView.items.clear()
-						tableView.items.addAll(exploreLayouts(newVal).map { ParamRow(SimpleStringProperty(it)) })
+						searchProcedureTableView.items.clear()
+						searchProcedureTableView.items.addAll(getProceduresReferences(newVal).map {
+							ParamRow(SimpleStringProperty(it))
+						})
 					}
 				}
 			}
@@ -88,6 +95,7 @@ class RCrifLayoutTool : Application() {
 				folderField.text = lastPath
 				val list = File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList()
 				allProcedures.setAll(list)
+				allConnectors.setAll(getAllConnectors(lastPath).map { it.connectorName }.distinct())
 			}
 		}
 		val chooseFolderButton = Button("Выбрать папку").apply {
@@ -104,9 +112,10 @@ class RCrifLayoutTool : Application() {
 					folderField.text = selectedDirectory!!.absolutePath
 					saveSelectedPath(selectedDirectory!!.absolutePath)
 					allProcedures.setAll(File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList())
-					procedureBox.selectionModel.clearSelection()
-					procedureBox.value = null
-					procedureBox.editor.clear()
+					allConnectors.setAll(getAllConnectors(selectedDirectory!!.absolutePath).map { it.connectorName }.distinct())
+					procedureComboBox.selectionModel.clearSelection()
+					procedureComboBox.value = null
+					procedureComboBox.editor.clear()
 					filteredProcedures.setPredicate { true }
 				}
 			}
@@ -116,19 +125,72 @@ class RCrifLayoutTool : Application() {
 			HBox.setHgrow(folderField, Priority.ALWAYS)
 		}
 
-		val mainTabContent = VBox(
-			10.0, Label("Название процедуры:"), procedureBox, tableView).apply {
+		val proceduresTabContent = VBox(10.0, Label("Название процедуры:"), procedureComboBox, searchProcedureTableView).apply {
 			padding = Insets(20.0)
 		}
 
-		val emptyTabContent = VBox().apply {
-			padding = Insets(20.0)
-			children.add(Label("Пусто"))
+		/* Поиск коннекторов */
+		val connectorTableColumn = TableColumn<ParamRow, String>("Название в активности").apply {
+			cellValueFactory = Callback { it.value.field }
+			isEditable = true
 		}
+		val connectorTableView = TableView<ParamRow>().apply {
+			columns.addAll(connectorTableColumn)
+			isEditable = true
+		}
+		connectorTableColumn.prefWidthProperty().bind(connectorTableView.widthProperty().subtract(2.0))
+
+		val connectorsComboBox = ComboBox(filteredConnectors).apply {
+			isEditable = true
+			promptText = "Название коннектора"
+			var guard = false
+			editor.textProperty().addListener { _, _, newValue ->
+				Platform.runLater {
+					if (guard) return@runLater
+					guard = true
+					val predicate: (String) -> Boolean = { s ->
+						newValue.isNullOrBlank() || s.contains(newValue, ignoreCase = true)
+					}
+					filteredConnectors.setPredicate(predicate)
+					if (newValue.isNullOrBlank()) {
+						selectionModel.clearSelection()
+						value = null
+						hide()
+					} else {
+						if (filteredConnectors.isNotEmpty()) show() else hide()
+					}
+					guard = false
+				}
+			}
+			valueProperty().addListener { _, _, newVal ->
+				Platform.runLater {
+					if (newVal != null) {
+						filteredConnectors.setPredicate { true }
+						editor.text = newVal
+						hide()
+						connectorTableView.items.clear()
+						connectorTableView.items.addAll(getConnectorReferences(folderField.text, newVal).map {
+							ParamRow(SimpleStringProperty(it))
+						})
+					}
+				}
+			}
+		}
+		val connectorsTabContent = VBox(10.0,
+			Label("Название коннектора:"),
+			connectorsComboBox,
+			connectorTableView
+		).apply {
+			padding = Insets(20.0)
+		}
+
+		/* Добавление связей */
+		val emptyTabContent = VBox(20.0, Label("Пусто"))
 
 		val tabPane = TabPane(
-			Tab("Поиск использования процедур", mainTabContent).apply { isClosable = false },
-			Tab("Добавление связей", emptyTabContent).apply { isClosable = false }
+			Tab("Поиск использования процедур", proceduresTabContent).apply { isClosable = false },
+			Tab("Поиск использования коннекторов", connectorsTabContent).apply { isClosable = false },
+			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
 		)
 
 		val root = VBox(
@@ -145,7 +207,7 @@ class RCrifLayoutTool : Application() {
 	}
 
 
-	private fun exploreLayouts(selectedProcedure: String): List<String?> {
+	private fun getProceduresReferences(selectedProcedure: String): List<String?> {
 		val mapper = XmlMapper()
 
 		val pcNamesFromProcedures = File(selectedDirectory, "Procedures")
@@ -171,7 +233,7 @@ class RCrifLayoutTool : Application() {
 					?: emptyList()
 			}
 
-		val mainLayouts = File(selectedDirectory, "MainFlow")
+		val pcNamesFromMainFlow = File(selectedDirectory, "MainFlow")
 			.listFiles { file -> file.isDirectory }
 			?.mapNotNull { dir ->
 				val props = File(dir, "Properties.xml")
@@ -185,7 +247,39 @@ class RCrifLayoutTool : Application() {
 			?.map { it.referenceName }
 			?: emptyList()
 
-		return mainLayouts + pcNamesFromProcedures
+		return pcNamesFromMainFlow + pcNamesFromProcedures
+	}
+
+
+	private fun getAllConnectors(selectedProcess: String): List<DataSourceActivityDefinition> {
+		val mapper = XmlMapper()
+
+		val dataSourceActivityDefinitions = File(selectedProcess, "Procedures")
+			.walkTopDown()
+			.filter { it.isFile && it.name == "Properties.xml" }
+			.toList()
+			.map { file ->
+				file.inputStream().use { input -> mapper.readValue(input, DataSourceActivityDefinition::class.java) }
+			}
+			.filter { activity -> activity.connectorName != null }
+
+		val propertiesFile = File(selectedProcess, "MainFlow")
+			.walkTopDown()
+			.filter { it.isFile && it.name == "Properties.xml" }
+			.toList()
+			.map { file ->
+				file.inputStream().use { input -> mapper.readValue(input, DataSourceActivityDefinition::class.java) }
+			}
+			.filter { activity -> activity.connectorName != null }
+
+		return dataSourceActivityDefinitions + propertiesFile
+	}
+
+
+	private fun getConnectorReferences(selectedProcess: String, selectedConnectorName: Any): List<String> {
+		return getAllConnectors(selectedProcess)
+			.filter { activity -> activity.connectorName == selectedConnectorName }
+			.map { activity -> activity.referenceName ?: "" }
 	}
 
 
@@ -199,13 +293,13 @@ class RCrifLayoutTool : Application() {
 		if (!configDir.exists()) {
 			configDir.mkdirs()
 		}
-		return File(configDir, "config.properties")
+		return File(configDir, SAVE_FILE_NAME)
 	}
 
 
 	private fun saveSelectedPath(path: String) {
-		val props = java.util.Properties()
-		props["selectedDirectory"] = path
+		val props = Properties()
+		props[SAVE_FOLDER_NAME] = path
 		getConfigFile().outputStream().use { props.store(it, null) }
 	}
 
@@ -213,9 +307,15 @@ class RCrifLayoutTool : Application() {
 	private fun loadSelectedPath(): String? {
 		val file = getConfigFile()
 		if (!file.exists()) return null
-		val props = java.util.Properties()
+		val props = Properties()
 		file.inputStream().use { props.load(it) }
-		return props.getProperty("selectedDirectory")
+		return props.getProperty(SAVE_FOLDER_NAME)
+	}
+
+
+	companion object {
+		private const val SAVE_FILE_NAME = "config.properties"
+		private const val SAVE_FOLDER_NAME = "selectedDirectory"
 	}
 
 }
