@@ -1,6 +1,8 @@
 package ru.ravel.rcriflayouttool
 
+import com.fasterxml.jackson.dataformat.xml.XmlMapper
 import javafx.application.Application
+import javafx.application.Platform
 import javafx.beans.property.SimpleStringProperty
 import javafx.collections.FXCollections
 import javafx.collections.transformation.FilteredList
@@ -12,89 +14,154 @@ import javafx.scene.layout.VBox
 import javafx.stage.DirectoryChooser
 import javafx.stage.Stage
 import javafx.util.Callback
+import ru.ravel.rcriflayouttool.model.ParamRow
+import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
+import ru.ravel.rcriflayouttool.model.properties.ProcedureCallActivityDefinition
 import java.io.File
 
 
 class RCrifLayoutTool : Application() {
 
+	private var selectedDirectory: File? = null
+
+
 	override fun start(stage: Stage) {
-		val procedures = FXCollections.observableArrayList<String>()
-		val filtered = FilteredList(procedures) { true }
-		val originalItems = FXCollections.observableArrayList(procedures)
-		val filteredItems = FXCollections.observableArrayList(procedures)
-		var selectedDirectory: File
+		val allProcedures = FXCollections.observableArrayList<String>()
+		val filteredProcedures = FilteredList(allProcedures) { true }
 
 		val folderField = TextField().apply {
 			isEditable = false
 			promptText = "Рабочая папка кредитного процесса"
 		}
 
-		val procedureNameField = ComboBox(filtered).apply {
-			promptText = "Название процедуры"
+
+		val fieldCol = TableColumn<ParamRow, String>("Название в процессе").apply {
+			cellValueFactory = Callback { it.value.field }
 			isEditable = true
-			editor.textProperty().addListener { _, _, text ->
-				filtered.setPredicate { item ->
-					text.isNullOrBlank() || item.contains(text, ignoreCase = true)
+		}
+		val tableView = TableView<ParamRow>().apply {
+			columns.addAll(fieldCol)
+			isEditable = true
+		}
+		fieldCol.prefWidthProperty().bind(tableView.widthProperty().subtract(2))
+
+		val procedureBox = ComboBox(filteredProcedures).apply {
+			isEditable = true
+			promptText = "Название процедуры"
+			var guard = false
+			editor.textProperty().addListener { _, _, newValue ->
+				Platform.runLater {
+					if (guard) return@runLater
+					guard = true
+					val predicate: (String) -> Boolean = { s ->
+						newValue.isNullOrBlank() || s.contains(newValue, ignoreCase = true)
+					}
+					filteredProcedures.setPredicate(predicate)
+					if (newValue.isNullOrBlank()) {
+						selectionModel.clearSelection()
+						value = null
+						hide()
+					} else {
+						if (filteredProcedures.isNotEmpty()) show() else hide()
+					}
+					guard = false
 				}
-				if (!isShowing) show()
+			}
+			valueProperty().addListener { _, _, newVal ->
+				Platform.runLater {
+					if (newVal != null) {
+						filteredProcedures.setPredicate { true }
+						editor.text = newVal
+						hide()
+						tableView.items.clear()
+						tableView.items.addAll(exploreLayouts(newVal).map { ParamRow(SimpleStringProperty(it)) })
+					}
+				}
 			}
 		}
 
 		val lastPath = loadSelectedPath()
 		if (lastPath != null) {
 			selectedDirectory = File(lastPath)
-			folderField.text = lastPath
-			val list = File(selectedDirectory, "Procedures").list()?.toList() ?: emptyList()
-			procedures.setAll(list)
-			procedureNameField.editor.clear()
+			if (selectedDirectory?.exists() == true) {
+				folderField.text = lastPath
+				val list = File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList()
+				allProcedures.setAll(list)
+			}
 		}
 		val chooseFolderButton = Button("Выбрать папку").apply {
 			setOnAction {
-				val directoryChooser = DirectoryChooser().apply {
+				selectedDirectory = DirectoryChooser().apply {
 					title = "Выберите рабочую папку"
-				}
-				val dir = directoryChooser.showDialog(stage)
-				if (dir != null) {
-					selectedDirectory = dir
-					val list = File(selectedDirectory, "Procedures").list()?.toList() ?: emptyList()
-					procedures.setAll(list)
-					procedureNameField.editor.clear()
-					folderField.text = dir.absolutePath
-					saveSelectedPath(dir.absolutePath)
+				}.showDialog(stage)
+				if (selectedDirectory != null) {
+					folderField.text = selectedDirectory!!.absolutePath
+					saveSelectedPath(selectedDirectory!!.absolutePath)
+					allProcedures.setAll(File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList())
+					procedureBox.selectionModel.clearSelection()
+					procedureBox.value = null
+					procedureBox.editor.clear()
+					filteredProcedures.setPredicate { true }
 				}
 			}
 		}
 
-		val folderHBox = HBox(5.0, folderField, chooseFolderButton)
-
-		val fieldCol = TableColumn<ParamRow, String>("Поле").apply {
-			cellValueFactory = Callback { it.value.field }
-			isEditable = true
-		}
-		val valueCol = TableColumn<ParamRow, String>("Значение").apply {
-			cellValueFactory = Callback { it.value.value }
-			isEditable = true
-		}
-		val tableView = TableView<ParamRow>().apply {
-			columns.addAll(fieldCol, valueCol)
-			isEditable = true
-		}
-		tableView.items.addAll(
-			ParamRow(SimpleStringProperty("Параметр 1"), SimpleStringProperty("Значение 1")),
-			ParamRow(SimpleStringProperty("Параметр 2"), SimpleStringProperty("Значение 2")),
-		)
-
-		val rootVBox = VBox(
+		val root = VBox(
 			10.0,
-			Label("Рабочая папка кредитного процесса:"), folderHBox,
-			Label("Название процедуры:"), procedureNameField,
-			Label("Параметры:"), tableView,
+			Label("Рабочая папка кредитного процесса:"), HBox(5.0, folderField, chooseFolderButton),
+			Label("Название процедуры:"), procedureBox,
+			Label("Параметры:"), tableView
 		).apply {
 			padding = Insets(20.0)
 		}
-		stage.scene = Scene(rootVBox, 600.0, 500.0)
+
+		stage.scene = Scene(root, 600.0, 500.0)
 		stage.title = "rCrif Layout Tool"
 		stage.show()
+	}
+
+
+	private fun exploreLayouts(selectedProcedure: String): List<String?> {
+		val mapper = XmlMapper()
+
+		val pcNamesFromProcedures = File(selectedDirectory, "Procedures")
+			.walkTopDown()
+			.filter { it.isFile && it.name == "Properties.xml" }
+			.toList()
+			.map { file ->
+				file.inputStream().use { input -> mapper.readValue(input, ProcedureCallActivityDefinition::class.java) }
+			}
+			.filter { it.procedureToCall == selectedProcedure }
+			.map { it.referenceName }
+
+		val proceduresLayouts = File(selectedDirectory, "Procedures")
+			.listFiles { file -> File(file, "Layout.xml").exists() }
+			?.map { file -> File(file, "Layout.xml") }
+			?.mapNotNull { file ->
+				file.inputStream().use { input -> mapper.readValue(input, DiagramLayout::class.java) }
+			}
+			?.flatMap { layout ->
+				layout.elements?.diagramElements
+					?.filter { de -> pcNamesFromProcedures.contains(de.reference) }
+					?.map { de -> de.uid }
+					?: emptyList()
+			}
+
+		val mainLayouts = File(selectedDirectory, "MainFlow")
+			.listFiles { file -> file.isDirectory }
+			?.mapNotNull { dir ->
+				val props = File(dir, "Properties.xml")
+				if (props.isFile) {
+					props.inputStream().use { input ->
+						mapper.readValue(input, ProcedureCallActivityDefinition::class.java)
+					}
+				} else null
+			}
+			?.filter { it.procedureToCall == selectedProcedure }
+			?.map { it.referenceName }
+			?: emptyList()
+
+		return mainLayouts + pcNamesFromProcedures
 	}
 
 
@@ -127,8 +194,6 @@ class RCrifLayoutTool : Application() {
 		return props.getProperty("selectedDirectory")
 	}
 
-
-	data class ParamRow(val field: SimpleStringProperty, val value: SimpleStringProperty)
 }
 
 
