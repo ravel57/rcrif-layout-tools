@@ -12,7 +12,7 @@ tasks.named('compileKotlin') {
 }
 
 group 'ru.ravel'
-version '0.1.0'
+version '0.1.1'
 
 repositories {
 	mavenCentral()
@@ -64,4 +64,22 @@ jlink {
 
 jlinkZip {
 	group = 'distribution'
+}
+
+
+jar {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+	from(sourceSets.main.output)
+	from {
+		configurations.runtimeClasspath
+				.filter { it.name.endsWith('.jar') && !it.name.startsWith('javafx-') }
+				.collect { zipTree(it) }
+	}
+	exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/*.EC'
+
+	manifest {
+		attributes(
+				'Main-Class': 'ru.ravel.rcriflayouttool.RCrifLayoutToolKt'
+		)
+	}
 }
