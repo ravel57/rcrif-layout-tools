@@ -28,6 +28,7 @@ import java.util.*
 class RCrifLayoutTool : Application() {
 
 	private var selectedDirectory: File? = null
+	private var layoutActivitiesCache: List<LayoutActivity> = emptyList()
 
 
 	override fun start(stage: Stage) {
@@ -47,11 +48,24 @@ class RCrifLayoutTool : Application() {
 			cellValueFactory = Callback { it.value.field }
 			isEditable = true
 		}
-		val searchProcedureTableView = TableView<ParamRow>().apply {
+		val procedureTableView = TableView<ParamRow>().apply {
 			columns.addAll(searchProcedureTableColumn)
 			isEditable = true
+			setRowFactory { _ ->
+				val row = TableRow<ParamRow>()
+				row.setOnContextMenuRequested { event ->
+					if (layoutActivitiesCache.isEmpty()) return@setOnContextMenuRequested
+					val menu = ContextMenu()
+					val map = layoutActivitiesCache
+						.filter { la -> la.reference == row.item.field.value }
+						.map { la -> MenuItem("${la.exitName} <-> ${la.toActivity}") }
+					menu.items.addAll(map)
+					menu.show(row, event.screenX, event.screenY)
+				}
+				row
+			}
 		}
-		searchProcedureTableColumn.prefWidthProperty().bind(searchProcedureTableView.widthProperty().subtract(2))
+		searchProcedureTableColumn.prefWidthProperty().bind(procedureTableView.widthProperty().subtract(2))
 
 		val procedureComboBox = ComboBox(filteredProcedures).apply {
 			isEditable = true
@@ -81,10 +95,11 @@ class RCrifLayoutTool : Application() {
 						filteredProcedures.setPredicate { true }
 						editor.text = newVal
 						hide()
-						searchProcedureTableView.items.clear()
-						val layoutActivities = getProceduresReferences(newVal)
-						searchProcedureTableView.items.addAll(
-							layoutActivities.map { it.reference }.map { ParamRow(SimpleStringProperty(it)) }
+						val activities = getProceduresActivities(newVal)
+						layoutActivitiesCache = activities
+						procedureTableView.items.clear()
+						procedureTableView.items.addAll(
+							activities.map { ParamRow(SimpleStringProperty(it.reference)) }
 						)
 					}
 				}
@@ -128,7 +143,7 @@ class RCrifLayoutTool : Application() {
 			HBox.setHgrow(folderField, Priority.ALWAYS)
 		}
 
-		val proceduresTabContent = VBox(10.0, Label("Название процедуры:"), procedureComboBox, searchProcedureTableView).apply {
+		val proceduresTabContent = VBox(10.0, Label("Название процедуры:"), procedureComboBox, procedureTableView).apply {
 			padding = Insets(20.0)
 		}
 
@@ -211,7 +226,7 @@ class RCrifLayoutTool : Application() {
 	}
 
 
-	private fun getProceduresReferences(selectedProcedure: String): List<LayoutActivity> {
+	private fun getProceduresActivities(selectedProcedure: String): List<LayoutActivity> {
 		val mapper = XmlMapper()
 
 		val pcNamesFromMainFlow = File(selectedDirectory, "MainFlow")
@@ -256,9 +271,17 @@ class RCrifLayoutTool : Application() {
 					dl.connections?.diagramConnections
 						?.map { dc ->
 							val exitName = dc.endPoints?.points?.firstOrNull { p -> p.elementRef == it.uid }?.exitPointRef ?: ""
-							val procedureToCall =
-								pcList.firstOrNull { pc -> pc.referenceName == it.reference }?.procedureToCall ?: ""
-							LayoutActivity(exitName = exitName, name = procedureToCall, reference = it.reference)
+							val procedureToCall = pcList.firstOrNull { pc -> pc.referenceName == it.reference }
+								?.procedureToCall ?: ""
+							val anotherUid = dc.endPoints?.points?.firstOrNull { p -> p.elementRef != exitName }?.elementRef ?: ""
+							val toActivity = dl.elements?.diagramElements
+								?.firstOrNull { de -> de.uid == anotherUid }?.reference ?: ""
+							LayoutActivity(
+								exitName = exitName,
+								name = procedureToCall,
+								reference = it.reference,
+								toActivity = toActivity
+							)
 						}
 						?.filter { la -> la.exitName.isNotEmpty() && la.name.isNotEmpty() }
 						?: emptyList()
