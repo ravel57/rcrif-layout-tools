@@ -10,6 +10,7 @@ import javafx.geometry.Insets
 import javafx.scene.Scene
 import javafx.scene.control.*
 import javafx.scene.layout.HBox
+import javafx.scene.layout.Priority
 import javafx.scene.layout.VBox
 import javafx.stage.DirectoryChooser
 import javafx.stage.Stage
@@ -91,9 +92,14 @@ class RCrifLayoutTool : Application() {
 		}
 		val chooseFolderButton = Button("Выбрать папку").apply {
 			setOnAction {
-				selectedDirectory = DirectoryChooser().apply {
+				val initialDir = lastPath?.let { File(it).parentFile }
+				val chooser = DirectoryChooser().apply {
 					title = "Выберите рабочую папку"
-				}.showDialog(stage)
+					if (initialDir?.exists() == true) {
+						initialDirectory = initialDir
+					}
+				}
+				selectedDirectory = chooser.showDialog(stage)
 				if (selectedDirectory != null) {
 					folderField.text = selectedDirectory!!.absolutePath
 					saveSelectedPath(selectedDirectory!!.absolutePath)
@@ -106,11 +112,29 @@ class RCrifLayoutTool : Application() {
 			}
 		}
 
+		val folderChooserPanel = HBox(5.0, folderField, chooseFolderButton).apply {
+			HBox.setHgrow(folderField, Priority.ALWAYS)
+		}
+
+		val mainTabContent = VBox(
+			10.0, Label("Название процедуры:"), procedureBox, tableView).apply {
+			padding = Insets(20.0)
+		}
+
+		val emptyTabContent = VBox().apply {
+			padding = Insets(20.0)
+			children.add(Label("Пусто"))
+		}
+
+		val tabPane = TabPane(
+			Tab("Поиск использования процедур", mainTabContent).apply { isClosable = false },
+			Tab("Добавление связей", emptyTabContent).apply { isClosable = false }
+		)
+
 		val root = VBox(
 			10.0,
-			Label("Рабочая папка кредитного процесса:"), HBox(5.0, folderField, chooseFolderButton),
-			Label("Название процедуры:"), procedureBox,
-			Label("Параметры:"), tableView
+			folderChooserPanel,
+			tabPane
 		).apply {
 			padding = Insets(20.0)
 		}
