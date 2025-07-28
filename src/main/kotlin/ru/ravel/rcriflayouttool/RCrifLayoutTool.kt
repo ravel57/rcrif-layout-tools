@@ -15,6 +15,8 @@ import javafx.scene.layout.VBox
 import javafx.stage.DirectoryChooser
 import javafx.stage.Stage
 import javafx.util.Callback
+import ru.ravel.rcriflayouttool.model.Activity
+import ru.ravel.rcriflayouttool.model.LayoutActivity
 import ru.ravel.rcriflayouttool.model.ParamRow
 import ru.ravel.rcriflayouttool.model.connectorproperties.DataSourceActivityDefinition
 import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
@@ -80,9 +82,10 @@ class RCrifLayoutTool : Application() {
 						editor.text = newVal
 						hide()
 						searchProcedureTableView.items.clear()
-						searchProcedureTableView.items.addAll(getProceduresReferences(newVal).map {
-							ParamRow(SimpleStringProperty(it))
-						})
+						val layoutActivities = getProceduresReferences(newVal)
+						searchProcedureTableView.items.addAll(
+							layoutActivities.map { it.reference }.map { ParamRow(SimpleStringProperty(it)) }
+						)
 					}
 				}
 			}
@@ -176,7 +179,8 @@ class RCrifLayoutTool : Application() {
 				}
 			}
 		}
-		val connectorsTabContent = VBox(10.0,
+		val connectorsTabContent = VBox(
+			10.0,
 			Label("Название коннектора:"),
 			connectorsComboBox,
 			connectorTableView
@@ -207,31 +211,8 @@ class RCrifLayoutTool : Application() {
 	}
 
 
-	private fun getProceduresReferences(selectedProcedure: String): List<String?> {
+	private fun getProceduresReferences(selectedProcedure: String): List<LayoutActivity> {
 		val mapper = XmlMapper()
-
-		val pcNamesFromProcedures = File(selectedDirectory, "Procedures")
-			.walkTopDown()
-			.filter { it.isFile && it.name == "Properties.xml" }
-			.toList()
-			.map { file ->
-				file.inputStream().use { input -> mapper.readValue(input, ProcedureCallActivityDefinition::class.java) }
-			}
-			.filter { it.procedureToCall == selectedProcedure }
-			.map { it.referenceName }
-
-		val proceduresLayouts = File(selectedDirectory, "Procedures")
-			.listFiles { file -> File(file, "Layout.xml").exists() }
-			?.map { file -> File(file, "Layout.xml") }
-			?.mapNotNull { file ->
-				file.inputStream().use { input -> mapper.readValue(input, DiagramLayout::class.java) }
-			}
-			?.flatMap { layout ->
-				layout.elements?.diagramElements
-					?.filter { de -> pcNamesFromProcedures.contains(de.reference) }
-					?.map { de -> de.uid }
-					?: emptyList()
-			}
 
 		val pcNamesFromMainFlow = File(selectedDirectory, "MainFlow")
 			.listFiles { file -> file.isDirectory }
@@ -244,10 +225,47 @@ class RCrifLayoutTool : Application() {
 				} else null
 			}
 			?.filter { it.procedureToCall == selectedProcedure }
-			?.map { it.referenceName }
 			?: emptyList()
 
-		return pcNamesFromMainFlow + pcNamesFromProcedures
+		val pcNamesFromProcedures = File(selectedDirectory, "Procedures")
+			.walkTopDown()
+			.filter { it.isFile && it.name == "Properties.xml" }
+			.toList()
+			.map { file ->
+				file.inputStream().use { input -> mapper.readValue(input, ProcedureCallActivityDefinition::class.java) }
+			}
+			.filter { it.procedureToCall == selectedProcedure }
+
+		val pcList = pcNamesFromMainFlow + pcNamesFromProcedures
+
+		val diagramLayout = File(selectedDirectory, "Procedures")
+			.listFiles { file -> File(file, "Layout.xml").exists() }
+			?.map { file -> File(file, "Layout.xml") }
+			?.mapNotNull { file ->
+				file.inputStream().use { input -> mapper.readValue(input, DiagramLayout::class.java) }
+			}
+		return diagramLayout
+			?.flatMap { layout ->
+				layout.elements?.diagramElements
+					?.filter { de -> pcNamesFromProcedures.map { it.referenceName }.contains(de.reference) }
+					?.map { de -> Activity(uid = de.uid!!, reference = de.reference!!) }
+					?: emptyList()
+			}
+			?.flatMap {
+				diagramLayout.flatMap { dl ->
+					dl.connections?.diagramConnections
+						?.map { dc ->
+							val exitName = dc.endPoints?.points?.firstOrNull { p -> p.elementRef == it.uid }?.exitPointRef ?: ""
+							val procedureToCall =
+								pcList.firstOrNull { pc -> pc.referenceName == it.reference }?.procedureToCall ?: ""
+							LayoutActivity(exitName = exitName, name = procedureToCall, reference = it.reference)
+						}
+						?.filter { la -> la.exitName.isNotEmpty() && la.name.isNotEmpty() }
+						?: emptyList()
+				}
+			}
+			?.distinct()
+			?: emptyList()
 	}
 
 
