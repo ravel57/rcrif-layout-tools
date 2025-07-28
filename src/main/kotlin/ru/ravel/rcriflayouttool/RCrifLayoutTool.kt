@@ -223,6 +223,10 @@ class RCrifLayoutTool : Application() {
 		stage.scene = Scene(root, 600.0, 500.0)
 		stage.title = "rCrif Layout Tool"
 		stage.show()
+		Platform.runLater {
+			procedureComboBox.requestFocus()
+			procedureComboBox.editor.requestFocus()
+		}
 	}
 
 
@@ -251,18 +255,23 @@ class RCrifLayoutTool : Application() {
 			}
 			.filter { it.procedureToCall == selectedProcedure }
 
-		val pcList = pcNamesFromMainFlow + pcNamesFromProcedures
-
 		val diagramLayout = File(selectedDirectory, "Procedures")
 			.listFiles { file -> File(file, "Layout.xml").exists() }
 			?.map { file -> File(file, "Layout.xml") }
 			?.mapNotNull { file ->
 				file.inputStream().use { input -> mapper.readValue(input, DiagramLayout::class.java) }
 			}
-		return diagramLayout
+			?.toMutableList()
+		val diagramLayoutMainFlow = File(selectedDirectory, "MainFlow/Layout.xml").let { file ->
+			file.takeIf { it.exists() }?.let { mapper.readValue(it, DiagramLayout::class.java) }
+		}
+		diagramLayoutMainFlow?.let { diagramLayout?.add(0, it) }
+		val layoutActivities = diagramLayout
 			?.flatMap { layout ->
 				layout.elements?.diagramElements
-					?.filter { de -> pcNamesFromProcedures.map { it.referenceName }.contains(de.reference) }
+					?.filter { de ->
+						(pcNamesFromProcedures + pcNamesFromMainFlow).map { it.referenceName }.contains(de.reference)
+					}
 					?.map { de -> Activity(uid = de.uid!!, reference = de.reference!!) }
 					?: emptyList()
 			}
@@ -271,24 +280,24 @@ class RCrifLayoutTool : Application() {
 					dl.connections?.diagramConnections
 						?.map { dc ->
 							val exitName = dc.endPoints?.points?.firstOrNull { p -> p.elementRef == it.uid }?.exitPointRef ?: ""
-							val procedureToCall = pcList.firstOrNull { pc -> pc.referenceName == it.reference }
-								?.procedureToCall ?: ""
 							val anotherUid = dc.endPoints?.points?.firstOrNull { p -> p.elementRef != exitName }?.elementRef ?: ""
 							val toActivity = dl.elements?.diagramElements
 								?.firstOrNull { de -> de.uid == anotherUid }?.reference ?: ""
 							LayoutActivity(
 								exitName = exitName,
-								name = procedureToCall,
+								name = selectedProcedure,
 								reference = it.reference,
 								toActivity = toActivity
 							)
 						}
-						?.filter { la -> la.exitName.isNotEmpty() && la.name.isNotEmpty() }
+						?.filter { la -> la.exitName.isNotEmpty() }
 						?: emptyList()
 				}
 			}
-			?.distinct()
+			?.distinctBy { Pair(it.reference, it.exitName) }
 			?: emptyList()
+
+		return layoutActivities
 	}
 
 
