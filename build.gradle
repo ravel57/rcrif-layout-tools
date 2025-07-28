@@ -7,8 +7,12 @@ plugins {
 	id 'org.beryx.jlink' version '2.25.0'
 }
 
+tasks.named('compileKotlin') {
+	destinationDirectory.set(layout.buildDirectory.dir('classes/java/main'))
+}
+
 group 'ru.ravel'
-version '1.0-SNAPSHOT'
+version '0.1.0'
 
 repositories {
 	mavenCentral()
@@ -25,7 +29,7 @@ tasks.withType(JavaCompile) {
 
 application {
 	mainModule = 'ru.ravel.rcriflayouttool'
-	mainClass = 'ru.ravel.rcriflayouttool.HelloApplication'
+	mainClass = 'ru.ravel.rcriflayouttool.RCrifLayoutToolKt'
 }
 kotlin {
 	jvmToolchain(17)
@@ -37,9 +41,9 @@ javafx {
 }
 
 dependencies {
-
-	testImplementation("org.junit.jupiter:junit-jupiter-api:${junitVersion}")
-	testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:${junitVersion}")
+	implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+	testImplementation "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
+	testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitVersion}"
 }
 
 test {
