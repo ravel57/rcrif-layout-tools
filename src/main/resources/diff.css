@@ -1,6 +1,57 @@
 .diff-delete {
-    -rtfx-background-color: rgba(255,200,200,0.7);
+    -rtfx-background-color: rgba(255, 200, 200, 0.9);
 }
+
 .diff-insert {
-    -rtfx-background-color: rgba(200,255,200,0.7);
+    -rtfx-background-color: rgba(200, 255, 200, 0.9);
+}
+
+.diff-gutter-delete {
+    -fx-background-color: rgba(255, 0, 0, 0.9);
+    -fx-min-width: 8px;
+    -fx-min-height: 8px;
+    -fx-background-radius: 4px;
+}
+
+.diff-gutter-insert {
+    -fx-background-color: rgba(0, 200, 0, 0.9);
+    -fx-min-width: 8px;
+    -fx-min-height: 8px;
+    -fx-background-radius: 4px;
+}
+
+.lineno {
+    -fx-text-fill: #9aa0a6;
+    -fx-padding: 0 8 0 6;
+    -fx-font-family: "Monospaced";
+}
+
+.gutter-box {
+    -fx-padding: 0 6 0 4;
+}
+
+.diff-gutter-del {
+    -fx-background-color: rgba(220, 53, 69, 0.85);
+    -fx-min-width: 6px; -fx-min-height: 6px;
+    -fx-pref-width: 6px; -fx-pref-height: 6px;
+    -fx-max-width: 6px; -fx-max-height: 6px;
+    -fx-background-radius: 3px;
+}
+
+.diff-gutter-ins {
+    -fx-background-color: rgba(25, 135, 84, 0.85);
+    -fx-min-width: 6px; -fx-min-height: 6px;
+    -fx-pref-width: 6px; -fx-pref-height: 6px;
+    -fx-max-width: 6px; -fx-max-height: 6px;
+    -fx-background-radius: 3px;
+}
+
+.lineno:marked {
+    /* два слоя фона: 1) прозрачный, 2) кружок */
+    -fx-background-color: transparent, #1e8e3e;
+    -fx-background-insets: 0, 0;              /* без дополнительных отступов */
+    -fx-background-radius: 0, 3;              /* радиус кружка 3px */
+    -fx-background-size: 6 6, 6 6;            /* диаметр 6px */
+    -fx-background-position: 6px center, 6px center;  /* смещение внутрь на 6px */
+    -fx-background-repeat: no-repeat;
 }

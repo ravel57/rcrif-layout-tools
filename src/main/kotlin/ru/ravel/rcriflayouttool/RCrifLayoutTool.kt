@@ -1,14 +1,11 @@
 package ru.ravel.rcriflayouttool
 
-import org.fxmisc.richtext.model.TwoDimensional.Bias
-import com.fasterxml.jackson.databind.DeserializationFeature
-import com.github.difflib.DiffUtils
-import org.fxmisc.richtext.model.StyleSpansBuilder
-import com.github.difflib.patch.DeltaType
 import com.fasterxml.jackson.dataformat.xml.XmlMapper
-import com.fasterxml.jackson.dataformat.xml.deser.FromXmlParser
+import com.github.difflib.DiffUtils
+import com.github.difflib.patch.DeltaType
 import javafx.application.Application
 import javafx.application.Platform
+import javafx.beans.binding.Bindings
 import javafx.beans.property.SimpleStringProperty
 import javafx.collections.FXCollections
 import javafx.collections.transformation.FilteredList
@@ -16,17 +13,17 @@ import javafx.geometry.Insets
 import javafx.scene.Scene
 import javafx.scene.control.*
 import javafx.scene.input.ScrollEvent
-import javafx.scene.layout.BorderPane
-import javafx.scene.layout.HBox
-import javafx.scene.layout.Priority
-import javafx.scene.layout.VBox
+import javafx.scene.layout.*
+import javafx.scene.paint.Color
+import javafx.scene.shape.Rectangle
 import javafx.stage.DirectoryChooser
 import javafx.stage.Stage
 import javafx.util.Callback
 import org.fxmisc.flowless.VirtualizedScrollPane
 import org.fxmisc.richtext.CodeArea
-import org.fxmisc.richtext.model.StyleSpans
-import java.time.Duration
+import org.fxmisc.richtext.LineNumberFactory
+import org.fxmisc.richtext.model.StyleSpansBuilder
+import org.fxmisc.richtext.model.TwoDimensional.Bias
 import org.reactfx.EventStream
 import org.reactfx.Subscription
 import ru.ravel.rcriflayouttool.dto.*
@@ -34,16 +31,12 @@ import ru.ravel.rcriflayouttool.model.connectorproperties.DataSourceActivityDefi
 import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
 import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
 import java.io.File
+import java.time.Duration
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
 
-
-/*
-TODO
-	Нумерация строк
-*/
 
 class RCrifLayoutTool : Application() {
 
@@ -280,14 +273,14 @@ class RCrifLayoutTool : Application() {
 		val margeArea2 = CodeArea()
 		val prevBtn = Button("◀").apply { isDisable = true; setOnAction { gotoDiff(-1, margeArea1, margeArea2) } }
 		val nextBtn = Button("▶").apply { isDisable = true; setOnAction { gotoDiff(+1, margeArea1, margeArea2) } }
-		val margePane1 = VirtualizedScrollPane(margeArea1).apply {
-			maxHeight = Double.MAX_VALUE
-		}
-		val margePane2 = VirtualizedScrollPane(margeArea2).apply {
-			maxHeight = Double.MAX_VALUE
-		}
-		bindScrollSync(margePane1, margePane2)
-		subscribeToChanges(margeArea1, margeArea2, prevBtn, nextBtn, margeArea1, margeArea2)
+
+		val scroll1 = VirtualizedScrollPane(margeArea1)
+		val scroll2 = VirtualizedScrollPane(margeArea2)
+		val wrapped1 = wrapWithGrayFiller(scroll1).apply { maxHeight = Double.MAX_VALUE }
+		val wrapped2 = wrapWithGrayFiller(scroll2).apply { maxHeight = Double.MAX_VALUE }
+
+		bindScrollSync(scroll1, scroll2)
+		subscribeToChanges(margeArea1, margeArea2, prevBtn, nextBtn)
 
 		val panesHBox = HBox(
 			4.0,
@@ -296,16 +289,19 @@ class RCrifLayoutTool : Application() {
 			prevBtn,
 			nextBtn
 		).apply {
-			padding = Insets(5.0)
-		}
-
-		val contentBox = HBox(4.0, margePane1, margePane2).apply {
 			spacing = 4.0
 			isFillHeight = true
-			HBox.setHgrow(margePane1, Priority.ALWAYS)
-			HBox.setHgrow(margePane2, Priority.ALWAYS)
-			margePane1.maxHeight = Double.MAX_VALUE
-			margePane2.maxHeight = Double.MAX_VALUE
+			HBox.setHgrow(wrapped1, Priority.ALWAYS)
+			HBox.setHgrow(wrapped2, Priority.ALWAYS)
+		}
+
+		val contentBox = HBox(4.0, wrapped1, wrapped2).apply {
+			spacing = 4.0
+			isFillHeight = true
+			HBox.setHgrow(wrapped1, Priority.ALWAYS)
+			HBox.setHgrow(wrapped2, Priority.ALWAYS)
+			wrapped1.maxHeight = Double.MAX_VALUE
+			wrapped2.maxHeight = Double.MAX_VALUE
 		}
 
 		val margeBp = BorderPane().apply {
@@ -346,6 +342,7 @@ class RCrifLayoutTool : Application() {
 		Platform.runLater {
 			procedureComboBox.requestFocus()
 			procedureComboBox.editor.requestFocus()
+			recalculateDiff(margeArea1, margeArea2, prevBtn, nextBtn)
 		}
 	}
 
@@ -491,14 +488,15 @@ class RCrifLayoutTool : Application() {
 		area2: CodeArea,
 		prevBtn: Button,
 		nextBtn: Button,
-		margeArea1: CodeArea,
-		margeArea2: CodeArea
 	) {
 		val changes1: EventStream<*> = area1.plainTextChanges()
 		val changes2: EventStream<*> = area2.plainTextChanges()
 		val merged: EventStream<*> = changes1.or(changes2)
 		subscription = merged.successionEnds(Duration.ofMillis(300)).subscribe {
-			recalculateDiff(area1, area2, prevBtn, nextBtn, margeArea1, margeArea2)
+			val (displayL, displayR) = alignForDisplay(area1.text, area2.text)
+			area1.replaceText(displayL)
+			area2.replaceText(displayR)
+			recalculateDiff(area1, area2, prevBtn, nextBtn)
 		}
 	}
 
@@ -508,15 +506,15 @@ class RCrifLayoutTool : Application() {
 		area2: CodeArea,
 		prevBtn: Button,
 		nextBtn: Button,
-		margeArea1: CodeArea,
-		margeArea2: CodeArea
 	) {
 		val lines1 = area1.text.lines()
 		val lines2 = area2.text.lines()
-		val (spansL, spansR, nav) = buildSpansAndNav(lines1, lines2)
-
+		val (spansL, spansR, nav, deletedLines, insertedLines) = buildSpansAndNav(lines1, lines2)
 		area1.setStyleSpans(0, spansL)
 		area2.setStyleSpans(0, spansR)
+//		}
+		area1.paragraphGraphicFactory = LineNumberFactory.get(area1)
+		area2.paragraphGraphicFactory = LineNumberFactory.get(area2)
 
 		diffNav.clear()
 		diffNav.addAll(nav)
@@ -525,7 +523,7 @@ class RCrifLayoutTool : Application() {
 		prevBtn.isDisable = !enabled
 		nextBtn.isDisable = !enabled
 		if (enabled) {
-			gotoDiff(0, margeArea1, margeArea2)
+			gotoDiff(0, area1, area2)
 		}
 
 		highlightDiff(area1, lines1, lines2, changeStyle = "diff-delete")
@@ -634,10 +632,9 @@ class RCrifLayoutTool : Application() {
 	 *  — StyleSpans для правой области,
 	 *  — список пар координат DiffNav (диапазоны отличий в обоих документах).
 	 */
-	private fun buildSpansAndNav(
-		left: List<String>,
-		right: List<String>
-	): Triple<StyleSpans<Collection<String>>, StyleSpans<Collection<String>>, List<DiffNav>> {
+	private fun buildSpansAndNav(left: List<String>, right: List<String>): DiffResult {
+		val deleted = mutableListOf<Int>()
+		val inserted = mutableListOf<Int>()
 		val cleanL = left.map { it.replace(uidRegex, """UID=""") }
 		val cleanR = right.map { it.replace(uidRegex, """UID=""") }
 		val deltas = DiffUtils.diff(cleanL, cleanR).deltas.sortedBy { it.source.position }
@@ -664,6 +661,7 @@ class RCrifLayoutTool : Application() {
 			when (d.type) {
 				DeltaType.DELETE -> {
 					d.source.lines.forEachIndexed { j, s ->
+						deleted += li + j
 						addDelL(lenL(li + j))
 						nav += DiffNav(
 							lStart = startsL[li + j], lEnd = startsL[li + j] + s.length,
@@ -675,6 +673,7 @@ class RCrifLayoutTool : Application() {
 
 				DeltaType.INSERT -> {
 					d.target.lines.forEachIndexed { j, s ->
+						inserted += ri + j
 						addInsR(lenR(ri + j))
 						nav += DiffNav(
 							lStart = null, lEnd = null,
@@ -685,6 +684,13 @@ class RCrifLayoutTool : Application() {
 				}
 
 				DeltaType.CHANGE -> {
+					if (d.source.lines.size != d.target.lines.size) {
+						d.source.lines.indices.forEach { j -> deleted += li + j }
+						d.target.lines.indices.forEach { j -> inserted += ri + j }
+					} else {
+						deleted += li
+						inserted += ri
+					}
 					val m = max(d.source.lines.size, d.target.lines.size)
 					for (j in 0 until m) {
 						val sL = d.source.lines.getOrNull(j)
@@ -742,6 +748,10 @@ class RCrifLayoutTool : Application() {
 						li++; ri++
 					}
 				}
+
+				else -> {
+					println()
+				}
 			}
 		}
 		while (li < left.size) {
@@ -750,7 +760,7 @@ class RCrifLayoutTool : Application() {
 		while (ri < right.size) {
 			addPlainR(lenR(ri)); ri++
 		}
-		return Triple(spansL.create(), spansR.create(), nav)
+		return DiffResult(spansL.create(), spansR.create(), nav.toList(), deleted, inserted)
 	}
 
 
@@ -774,6 +784,78 @@ class RCrifLayoutTool : Application() {
 			val para = margeArea2.offsetToPosition(s, Bias.Forward).major
 			margeArea2.showParagraphAtTop(max(para - 3, 0))
 		}
+	}
+
+
+	private fun wrapWithGrayFiller(scroll: VirtualizedScrollPane<*>): StackPane {
+		val filler = Rectangle().apply {
+			fill = Color.LIGHTGRAY
+			isMouseTransparent = true
+			isManaged = false
+			widthProperty().bind(scroll.widthProperty())
+			heightProperty().bind(
+				Bindings.createDoubleBinding(
+					{
+						val H = scroll.height
+						val y = scroll.estimatedScrollY
+						val T = scroll.totalHeightEstimate
+						maxOf(0.0, H + y - T)
+					},
+					scroll.heightProperty(),
+					scroll.estimatedScrollYProperty(),
+					scroll.totalHeightEstimateProperty()
+				)
+			)
+			translateYProperty().bind(
+				Bindings.createDoubleBinding(
+					{
+						val y = scroll.estimatedScrollY
+						val T = scroll.totalHeightEstimate
+						maxOf(0.0, T - y)
+					},
+					scroll.estimatedScrollYProperty(),
+					scroll.totalHeightEstimateProperty()
+				)
+			)
+		}
+		return StackPane(scroll, filler)
+	}
+
+
+	private fun alignForDisplay(leftText: String, rightText: String): Pair<String, String> {
+		val left = leftText.lines().toMutableList()
+		val right = rightText.lines().toMutableList()
+		fun clean(xs: List<String>) = xs.map { it.replace(Regex("""\bUID="[^"]*""""), """UID=""") }
+		val deltas = DiffUtils.diff(clean(left), clean(right)).deltas.sortedBy { it.source.position }
+		var lOff = 0
+		var rOff = 0
+		for (d in deltas) {
+			val lp = d.source.position + lOff
+			val rp = d.target.position + rOff
+			when (d.type) {
+				DeltaType.DELETE -> {
+					repeat(d.source.lines.size) { i -> right.add(rp + i, ""); rOff++ }
+				}
+
+				DeltaType.INSERT -> {
+					repeat(d.target.lines.size) { i -> left.add(lp + i, ""); lOff++ }
+				}
+
+				DeltaType.CHANGE -> {
+					val dl = d.source.lines.size
+					val dr = d.target.lines.size
+					when {
+						dl < dr -> repeat(dr - dl) { i -> left.add(lp + dl + i, ""); lOff++ }
+						dl > dr -> repeat(dl - dr) { i -> right.add(rp + dr + i, ""); rOff++ }
+					}
+				}
+
+				else -> {
+					/* EQUAL не трогаем */
+				}
+			}
+		}
+		return left.joinToString("\n") to right.joinToString("\n")
 	}
 
 
