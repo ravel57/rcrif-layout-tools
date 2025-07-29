@@ -15,9 +15,10 @@ import javafx.scene.layout.VBox
 import javafx.stage.DirectoryChooser
 import javafx.stage.Stage
 import javafx.util.Callback
-import ru.ravel.rcriflayouttool.model.Activity
-import ru.ravel.rcriflayouttool.model.LayoutActivity
-import ru.ravel.rcriflayouttool.model.ParamRow
+import ru.ravel.rcriflayouttool.dto.ActivitiesForMenu
+import ru.ravel.rcriflayouttool.dto.Activity
+import ru.ravel.rcriflayouttool.dto.LayoutActivity
+import ru.ravel.rcriflayouttool.dto.ParamRow
 import ru.ravel.rcriflayouttool.model.connectorproperties.DataSourceActivityDefinition
 import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
 import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
@@ -28,7 +29,7 @@ import java.util.*
 class RCrifLayoutTool : Application() {
 
 	private var selectedDirectory: File? = null
-	private var layoutActivitiesCache: List<LayoutActivity> = emptyList()
+	private var layoutActivitiesCache: List<ActivitiesForMenu> = emptyList()
 
 
 	override fun start(stage: Stage) {
@@ -56,10 +57,12 @@ class RCrifLayoutTool : Application() {
 				row.setOnContextMenuRequested { event ->
 					if (layoutActivitiesCache.isEmpty()) return@setOnContextMenuRequested
 					val menu = ContextMenu()
-					val map = layoutActivitiesCache
+					val items = layoutActivitiesCache
 						.filter { la -> la.reference == row.item.field.value }
-						.map { la -> MenuItem("${la.exitName} <-> ${la.toActivity}") }
-					menu.items.addAll(map)
+						.flatMap { a ->
+							List(a.toActivity.size) { index -> "${a.exitName[index]} <-> ${a.toActivity[index]}" }
+						}
+					menu.items.addAll(items.distinct().map { MenuItem(it) })
 					menu.show(row, event.screenX, event.screenY)
 				}
 				row
@@ -98,9 +101,7 @@ class RCrifLayoutTool : Application() {
 						val activities = getProceduresActivities(newVal)
 						layoutActivitiesCache = activities
 						procedureTableView.items.clear()
-						procedureTableView.items.addAll(
-							activities.map { ParamRow(SimpleStringProperty(it.reference)) }
-						)
+						procedureTableView.items.addAll(activities.map { ParamRow(SimpleStringProperty(it.reference)) })
 					}
 				}
 			}
@@ -230,7 +231,7 @@ class RCrifLayoutTool : Application() {
 	}
 
 
-	private fun getProceduresActivities(selectedProcedure: String): List<LayoutActivity> {
+	private fun getProceduresActivities(selectedProcedure: String): List<ActivitiesForMenu> {
 		val mapper = XmlMapper()
 
 		val pcNamesFromMainFlow = File(selectedDirectory, "MainFlow")
@@ -294,7 +295,14 @@ class RCrifLayoutTool : Application() {
 						?: emptyList()
 				}
 			}
-			?.distinctBy { Pair(it.reference, it.exitName) }
+			?.groupBy { it.reference }
+			?.map { (reference, list) ->
+				ActivitiesForMenu(
+					list[0].name,
+					reference,
+					list.map { it.exitName },
+					list.map { it.toActivity })
+			}
 			?: emptyList()
 
 		return layoutActivities

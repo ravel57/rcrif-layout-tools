@@ -1,4 +1,4 @@
-package ru.ravel.rcriflayouttool.model
+package ru.ravel.rcriflayouttool.dto
 
 import javafx.beans.property.SimpleStringProperty
 

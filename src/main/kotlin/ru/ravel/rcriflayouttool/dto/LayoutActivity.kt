@@ -1,4 +1,4 @@
-package ru.ravel.rcriflayouttool.model
+package ru.ravel.rcriflayouttool.dto
 
 data class LayoutActivity(
 	val exitName: String,
