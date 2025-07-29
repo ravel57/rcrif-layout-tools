@@ -1,0 +1,6 @@
+.diff-delete {
+    -rtfx-background-color: rgba(255,200,200,0.7);
+}
+.diff-insert {
+    -rtfx-background-color: rgba(200,255,200,0.7);
+}

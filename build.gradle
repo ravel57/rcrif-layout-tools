@@ -69,6 +69,14 @@ jlinkZip {
 	group = 'distribution'
 }
 
+tasks.named("processResources", Copy) {
+	doFirst {
+		source.files.findAll { it.name == "xml‑highlighting.css" }
+				.each { println "  -> " + it.absolutePath }
+	}
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 
 jar {
 	duplicatesStrategy = DuplicatesStrategy.EXCLUDE

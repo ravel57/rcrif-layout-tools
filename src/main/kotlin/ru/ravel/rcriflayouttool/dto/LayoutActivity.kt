@@ -1,5 +1,6 @@
 package ru.ravel.rcriflayouttool.dto
 
+
 data class LayoutActivity(
 	val exitName: String,
 	val name: String,

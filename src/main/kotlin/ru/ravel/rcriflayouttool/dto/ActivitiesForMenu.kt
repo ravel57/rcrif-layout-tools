@@ -1,5 +1,6 @@
 package ru.ravel.rcriflayouttool.dto
 
+
 data class ActivitiesForMenu(
 	val name: String,
 	val reference: String,

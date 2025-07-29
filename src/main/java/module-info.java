@@ -7,6 +7,8 @@ module ru.ravel.rcriflayouttool {
 	requires org.fxmisc.flowless;
 	requires org.fxmisc.richtext;
 	requires reactfx;
+	requires io.github.javadiffutils;
+	requires com.fasterxml.jackson.databind;
 
 
 	opens ru.ravel.rcriflayouttool to javafx.fxml;
