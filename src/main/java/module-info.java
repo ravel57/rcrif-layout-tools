@@ -4,6 +4,9 @@ module ru.ravel.rcriflayouttool {
 	requires kotlin.stdlib;
 	requires com.fasterxml.jackson.dataformat.xml;
 	requires com.fasterxml.jackson.annotation;
+	requires org.fxmisc.flowless;
+	requires org.fxmisc.richtext;
+	requires reactfx;
 
 
 	opens ru.ravel.rcriflayouttool to javafx.fxml;

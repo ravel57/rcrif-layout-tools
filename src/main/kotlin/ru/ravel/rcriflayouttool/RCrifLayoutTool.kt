@@ -9,12 +9,16 @@ import javafx.collections.transformation.FilteredList
 import javafx.geometry.Insets
 import javafx.scene.Scene
 import javafx.scene.control.*
+import javafx.scene.input.ScrollEvent
+import javafx.scene.layout.BorderPane
 import javafx.scene.layout.HBox
 import javafx.scene.layout.Priority
 import javafx.scene.layout.VBox
 import javafx.stage.DirectoryChooser
 import javafx.stage.Stage
 import javafx.util.Callback
+import org.fxmisc.flowless.VirtualizedScrollPane
+import org.fxmisc.richtext.CodeArea
 import ru.ravel.rcriflayouttool.dto.ActivitiesForMenu
 import ru.ravel.rcriflayouttool.dto.Activity
 import ru.ravel.rcriflayouttool.dto.LayoutActivity
@@ -24,6 +28,7 @@ import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
 import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
 import java.io.File
 import java.util.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 
 class RCrifLayoutTool : Application() {
@@ -38,6 +43,9 @@ class RCrifLayoutTool : Application() {
 
 		val allConnectors = FXCollections.observableArrayList<String>()
 		val filteredConnectors = FilteredList(allConnectors) { true }
+
+		val allMarge = FXCollections.observableArrayList<String>()
+		val filteredMarge = FilteredList(allMarge) { true }
 
 		val folderField = TextField().apply {
 			isEditable = false
@@ -112,9 +120,13 @@ class RCrifLayoutTool : Application() {
 			selectedDirectory = File(lastPath)
 			if (selectedDirectory?.exists() == true) {
 				folderField.text = lastPath
-				val list = File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList()
-				allProcedures.setAll(list)
+				allProcedures.setAll(File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList())
 				allConnectors.setAll(getAllConnectors(lastPath).map { it.connectorName }.distinct())
+				allMarge.setAll(File(selectedDirectory, "Procedures").list()
+					?.sorted()
+					?.toMutableList()
+					?.apply { add(0, "MainFlow") }
+					?: emptyList())
 			}
 		}
 		val chooseFolderButton = Button("Выбрать папку").apply {
@@ -132,6 +144,11 @@ class RCrifLayoutTool : Application() {
 					saveSelectedPath(selectedDirectory!!.absolutePath)
 					allProcedures.setAll(File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList())
 					allConnectors.setAll(getAllConnectors(selectedDirectory!!.absolutePath).map { it.connectorName }.distinct())
+					allMarge.setAll(File(selectedDirectory, "Procedures").list()
+						?.sorted()
+						?.toMutableList()
+						?.apply { add(0, "MainFlow") }
+						?: emptyList())
 					procedureComboBox.selectionModel.clearSelection()
 					procedureComboBox.value = null
 					procedureComboBox.editor.clear()
@@ -144,7 +161,11 @@ class RCrifLayoutTool : Application() {
 			HBox.setHgrow(folderField, Priority.ALWAYS)
 		}
 
-		val proceduresTabContent = VBox(10.0, Label("Название процедуры:"), procedureComboBox, procedureTableView).apply {
+		val proceduresTabContent = VBox(
+			10.0,
+			HBox(Label("Название процедуры:"), procedureComboBox).apply { padding = Insets(5.0) },
+			procedureTableView
+		).apply {
 			padding = Insets(20.0)
 		}
 
@@ -197,21 +218,89 @@ class RCrifLayoutTool : Application() {
 		}
 		val connectorsTabContent = VBox(
 			10.0,
-			Label("Название коннектора:"),
-			connectorsComboBox,
+			HBox(Label("Название коннектора:"), connectorsComboBox).apply { padding = Insets(5.0) },
 			connectorTableView
 		).apply {
 			padding = Insets(20.0)
 		}
 
+		/* Marge */
+		val mergeComboBox = ComboBox(filteredMarge).apply {
+			isEditable = true
+			promptText = "Layout процедуры"
+			var guard = false
+			editor.textProperty().addListener { _, _, newValue ->
+				Platform.runLater {
+					if (guard) return@runLater
+					guard = true
+					val predicate: (String) -> Boolean = { s ->
+						newValue.isNullOrBlank() || s.contains(newValue, ignoreCase = true)
+					}
+					filteredMarge.setPredicate(predicate)
+					if (newValue.isNullOrBlank()) {
+						selectionModel.clearSelection()
+						value = null
+						hide()
+					} else {
+						if (filteredMarge.isNotEmpty()) show() else hide()
+					}
+					guard = false
+				}
+			}
+			valueProperty().addListener { _, _, newVal ->
+				Platform.runLater {
+					if (newVal != null) {
+						filteredMarge.setPredicate { true }
+						editor.text = newVal
+						hide()
+					}
+				}
+			}
+		}
+
+		val margeArea1 = CodeArea()
+		val margeArea2 = CodeArea()
+		val margePane1 = VirtualizedScrollPane(margeArea1).apply {
+			maxHeight = Double.MAX_VALUE
+		}
+		val margePane2 = VirtualizedScrollPane(margeArea2).apply {
+			maxHeight = Double.MAX_VALUE
+		}
+		bindScrollSync(margePane1, margePane2)
+
+		val panesHBox = HBox(4.0, Label("Layout: "), mergeComboBox).apply {
+			padding = Insets(5.0)
+		}
+
+		// 2) Непосредственно редакторы
+		val contentBox = HBox(4.0, margePane1, margePane2).apply {
+			spacing = 4.0
+			isFillHeight = true
+			HBox.setHgrow(margePane1, Priority.ALWAYS)
+			HBox.setHgrow(margePane2, Priority.ALWAYS)
+			margePane1.maxHeight = Double.MAX_VALUE
+			margePane2.maxHeight = Double.MAX_VALUE
+		}
+
+		val margeBp = BorderPane().apply {
+			top = panesHBox
+			center = contentBox
+			padding = Insets(20.0)
+		}
+		VBox.setVgrow(margeBp, Priority.ALWAYS)
+
 		/* Добавление связей */
 		val emptyTabContent = VBox(20.0, Label("Пусто"))
 
+		/* Сборка вкладок */
 		val tabPane = TabPane(
 			Tab("Поиск использования процедур", proceduresTabContent).apply { isClosable = false },
 			Tab("Поиск использования коннекторов", connectorsTabContent).apply { isClosable = false },
+			Tab("Layout marge", margeBp).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
 		)
+
+		VBox.setVgrow(tabPane, Priority.ALWAYS)
 
 		val root = VBox(
 			10.0,
@@ -338,6 +427,36 @@ class RCrifLayoutTool : Application() {
 		return getAllConnectors(selectedProcess)
 			.filter { activity -> activity.connectorName == selectedConnectorName }
 			.map { activity -> activity.referenceName ?: "" }
+	}
+
+
+	private fun bindScrollSync(p1: VirtualizedScrollPane<*>, p2: VirtualizedScrollPane<*>) {
+		val guard = AtomicBoolean(false)
+
+		fun clampRatio(r: Double) = r.coerceIn(0.0, 1.0)
+
+		listOf(p1 to p2, p2 to p1).forEach { (src, dst) ->
+			src.addEventFilter(ScrollEvent.SCROLL) { ev ->
+				if (ev.deltaY == 0.0 || !guard.compareAndSet(false, true)) return@addEventFilter
+				dst.scrollYBy(-ev.deltaY)
+				guard.set(false)
+			}
+		}
+
+		listOf(p1 to p2, p2 to p1).forEach { (src, dst) ->
+			src.estimatedScrollYProperty().addListener { _, _, newY ->
+				if (!guard.compareAndSet(false, true)) return@addListener
+				Platform.runLater {
+					val totalSrc = src.totalHeightEstimateProperty().value
+					val totalDst = dst.totalHeightEstimateProperty().value
+					if (totalSrc > 0 && totalDst > 0) {
+						val ratio = clampRatio(newY.toDouble() / totalSrc)
+						dst.scrollYToPixel(ratio * totalDst)
+					}
+					guard.set(false)
+				}
+			}
+		}
 	}
 
 
