@@ -9,6 +9,7 @@ import javafx.beans.binding.Bindings
 import javafx.beans.property.SimpleStringProperty
 import javafx.collections.FXCollections
 import javafx.collections.transformation.FilteredList
+import javafx.concurrent.Task
 import javafx.geometry.Insets
 import javafx.scene.Scene
 import javafx.scene.control.*
@@ -33,6 +34,7 @@ import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityD
 import java.io.File
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
@@ -314,11 +316,69 @@ class RCrifLayoutTool : Application() {
 		/* Добавление связей */
 		val emptyTabContent = VBox(20.0, Label("Пусто"))
 
+		/* Неиспользуемые процедуры */
+		val unusedProcedureTableColumn = TableColumn<ParamRow, String>("Название процедуры").apply {
+			cellValueFactory = Callback { it.value.field }
+			isEditable = true
+		}
+		val unusedProcedureTableView = TableView<ParamRow>().apply {
+			columns.addAll(unusedProcedureTableColumn)
+			isEditable = true
+		}
+		unusedProcedureTableColumn.prefWidthProperty().bind(unusedProcedureTableView.widthProperty().subtract(2))
+		val unusedProceduresProgress = ProgressBar().apply {
+			isVisible = false
+			maxWidth = 100.0
+		}
+		val unusedProceduresButton = Button("Поиск").apply {
+			isDisable = selectedDirectory?.exists() == false
+			setOnAction {
+				isDisable = true
+				unusedProceduresProgress.isVisible = true
+
+				// Фоновая задача
+				val task = object : Task<List<ParamRow>>() {
+					override fun call(): List<ParamRow> {
+						val dir = selectedDirectory ?: return emptyList()
+						val files = File(dir, "Procedures").list() ?: arrayOf()
+						val result = mutableListOf<ParamRow>()
+						for ((i, name) in files.withIndex()) {
+							updateProgress(i.toLong(), files.size.toLong())
+							val acts = getProceduresActivities(name)
+							if (acts.isEmpty()) {
+								result.add(ParamRow(SimpleStringProperty(name)))
+							}
+						}
+						return result
+					}
+				}
+				unusedProceduresProgress.progressProperty().bind(task.progressProperty())
+				task.setOnSucceeded { _ ->
+					unusedProcedureTableView.items.setAll(task.value)
+					unusedProceduresProgress.isVisible = false
+					isDisable = false
+				}
+				task.setOnFailed {
+					unusedProceduresProgress.isVisible = false
+					isDisable = false
+				}
+				Executors.newSingleThreadExecutor().submit(task)
+			}
+		}
+		val unusedProcedureTabContent = VBox(
+			10.0,
+			HBox(5.0, unusedProceduresButton, unusedProceduresProgress),
+			unusedProcedureTableView
+		).apply {
+			padding = Insets(20.0)
+		}
+
 		/* Сборка вкладок */
 		val tabPane = TabPane(
 			Tab("Поиск использования процедур", proceduresTabContent).apply { isClosable = false },
 			Tab("Поиск использования коннекторов", connectorsTabContent).apply { isClosable = false },
 			Tab("Layout marge", margeBp).apply { isClosable = false },
+			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
 		)
 
@@ -487,17 +547,28 @@ class RCrifLayoutTool : Application() {
 		area1: CodeArea,
 		area2: CodeArea,
 		prevBtn: Button,
-		nextBtn: Button,
+		nextBtn: Button
 	) {
-		val changes1: EventStream<*> = area1.plainTextChanges()
-		val changes2: EventStream<*> = area2.plainTextChanges()
-		val merged: EventStream<*> = changes1.or(changes2)
-		subscription = merged.successionEnds(Duration.ofMillis(300)).subscribe {
-			val (displayL, displayR) = alignForDisplay(area1.text, area2.text)
-			area1.replaceText(displayL)
-			area2.replaceText(displayR)
-			recalculateDiff(area1, area2, prevBtn, nextBtn)
-		}
+		val changes: EventStream<*> = area1.plainTextChanges().or(area2.plainTextChanges())
+		subscription = changes
+			.threadBridgeFromFx(diffExecutor)
+			.successionEnds(Duration.ofMillis(500))
+			.map { Pair(area1.text.lines(), area2.text.lines()) }
+			.map { (l1, l2) -> buildSpansAndNav(l1, l2) }
+			.threadBridgeToFx(diffExecutor)
+			.subscribe { (spansL, spansR, nav, deletedLines, insertedLines) ->
+				area1.setStyleSpans(0, spansL)
+				area2.setStyleSpans(0, spansR)
+				diffNav.clear()
+				diffNav.addAll(nav)
+				diffIdx = if (nav.isEmpty()) -1 else 0
+				val enabled = nav.isNotEmpty()
+				prevBtn.isDisable = !enabled
+				nextBtn.isDisable = !enabled
+				if (enabled) gotoDiff(0, area1, area2)
+				area1.paragraphGraphicFactory = LineNumberFactory.get(area1)
+				area2.paragraphGraphicFactory = LineNumberFactory.get(area2)
+			}
 	}
 
 
@@ -507,27 +578,28 @@ class RCrifLayoutTool : Application() {
 		prevBtn: Button,
 		nextBtn: Button,
 	) {
-		val lines1 = area1.text.lines()
-		val lines2 = area2.text.lines()
-		val (spansL, spansR, nav, deletedLines, insertedLines) = buildSpansAndNav(lines1, lines2)
-		area1.setStyleSpans(0, spansL)
-		area2.setStyleSpans(0, spansR)
-//		}
-		area1.paragraphGraphicFactory = LineNumberFactory.get(area1)
-		area2.paragraphGraphicFactory = LineNumberFactory.get(area2)
+		if (area1.text.isNotBlank() && area2.text.isNotBlank()) {
+			val lines1 = area1.text.lines()
+			val lines2 = area2.text.lines()
+			val (spansL, spansR, nav, deletedLines, insertedLines) = buildSpansAndNav(lines1, lines2)
+			area1.setStyleSpans(0, spansL)
+			area2.setStyleSpans(0, spansR)
+			area1.paragraphGraphicFactory = LineNumberFactory.get(area1)
+			area2.paragraphGraphicFactory = LineNumberFactory.get(area2)
 
-		diffNav.clear()
-		diffNav.addAll(nav)
-		diffIdx = if (diffNav.isEmpty()) -1 else 0
-		val enabled = diffNav.isNotEmpty()
-		prevBtn.isDisable = !enabled
-		nextBtn.isDisable = !enabled
-		if (enabled) {
-			gotoDiff(0, area1, area2)
+			diffNav.clear()
+			diffNav.addAll(nav)
+			diffIdx = if (diffNav.isEmpty()) -1 else 0
+			val enabled = diffNav.isNotEmpty()
+			prevBtn.isDisable = !enabled
+			nextBtn.isDisable = !enabled
+			if (enabled) {
+				gotoDiff(0, area1, area2)
+			}
+
+			highlightDiff(area1, lines1, lines2, changeStyle = "diff-delete")
+			highlightDiff(area2, lines2, lines1, changeStyle = "diff-insert")
 		}
-
-		highlightDiff(area1, lines1, lines2, changeStyle = "diff-delete")
-		highlightDiff(area2, lines2, lines1, changeStyle = "diff-insert")
 	}
 
 
@@ -538,8 +610,17 @@ class RCrifLayoutTool : Application() {
 	 *               для левой:  "diff-delete", для правой: "diff-insert"
 	 */
 	private fun highlightDiff(area: CodeArea, original: List<String>, other: List<String>, changeStyle: String) {
-		val cleanOrig = original.map { it.replace(uidRegex, """UID=""") }
-		val cleanOther = other.map { it.replace(uidRegex, """UID=""") }
+		val cleanOrig = original.map { line ->
+			line.replace(ignoreAttrs) { m ->
+				// m.groupValues[1] — это либо "UID", либо "ElementRef"
+				"${m.groupValues[1]}=\"\""
+			}
+		}
+		val cleanOther = other.map { line ->
+			line.replace(ignoreAttrs) { m ->
+				"${m.groupValues[1]}=\"\""
+			}
+		}
 		val deltas = DiffUtils.diff(cleanOrig, cleanOther)
 			.deltas
 			.sortedBy { it.source.position }
@@ -633,10 +714,19 @@ class RCrifLayoutTool : Application() {
 	 *  — список пар координат DiffNav (диапазоны отличий в обоих документах).
 	 */
 	private fun buildSpansAndNav(left: List<String>, right: List<String>): DiffResult {
+//		if (text1 == lastText1 && text2 == lastText2) return
 		val deleted = mutableListOf<Int>()
 		val inserted = mutableListOf<Int>()
-		val cleanL = left.map { it.replace(uidRegex, """UID=""") }
-		val cleanR = right.map { it.replace(uidRegex, """UID=""") }
+		val cleanL = left.map { line ->
+			line.replace(ignoreAttrs) { m ->
+				"${m.groupValues[1]}=\"\""
+			}
+		}
+		val cleanR = right.map { line ->
+			line.replace(ignoreAttrs) { m ->
+				"${m.groupValues[1]}=\"\""
+			}
+		}
 		val deltas = DiffUtils.diff(cleanL, cleanR).deltas.sortedBy { it.source.position }
 		val spansL = StyleSpansBuilder<Collection<String>>()
 		val spansR = StyleSpansBuilder<Collection<String>>()
@@ -750,7 +840,6 @@ class RCrifLayoutTool : Application() {
 				}
 
 				else -> {
-					println()
 				}
 			}
 		}
@@ -765,24 +854,26 @@ class RCrifLayoutTool : Application() {
 
 
 	private fun gotoDiff(step: Int, margeArea1: CodeArea, margeArea2: CodeArea) {
-		if (diffNav.isEmpty()) return
-		if (step != 0) {
-			diffIdx = (diffIdx + step).mod(diffNav.size)
-		} else if (diffIdx == -1) {
-			diffIdx = 0
+		if (diffNav.isEmpty()) {
+			return
 		}
+		diffIdx = (diffIdx + step).coerceIn(0, diffNav.lastIndex)
 		val d = diffNav[diffIdx]
 		d.lStart?.let { s ->
-			val e = d.lEnd!!
-			margeArea1.selectRange(s, e)
-			val para = margeArea1.offsetToPosition(s, Bias.Forward).major
-			margeArea1.showParagraphAtTop(max(para - 3, 0))
+			margeArea1.selectRange(s, d.lEnd!!)
 		}
 		d.rStart?.let { s ->
-			val e = d.rEnd!!
-			margeArea2.selectRange(s, e)
-			val para = margeArea2.offsetToPosition(s, Bias.Forward).major
-			margeArea2.showParagraphAtTop(max(para - 3, 0))
+			margeArea2.selectRange(s, d.rEnd!!)
+		}
+		Platform.runLater {
+			d.lStart?.let { s ->
+				val p = margeArea1.offsetToPosition(s, Bias.Forward).major
+				margeArea1.showParagraphAtCenter(p)
+			}
+			d.rStart?.let { s ->
+				val p = margeArea2.offsetToPosition(s, Bias.Forward).major
+				margeArea2.showParagraphAtCenter(p)
+			}
 		}
 	}
 
@@ -859,8 +950,15 @@ class RCrifLayoutTool : Application() {
 	}
 
 
+	private val diffExecutor = Executors.newSingleThreadExecutor { r ->
+		Thread(r, "diff-pool").apply { isDaemon = true }
+	}
+
+
 	override fun stop() {
+		super.stop()
 		subscription?.unsubscribe()
+		diffExecutor.shutdown()
 	}
 
 
@@ -897,7 +995,7 @@ class RCrifLayoutTool : Application() {
 	companion object {
 		private const val SAVE_FILE_NAME = "config.properties"
 		private const val SAVE_FOLDER_NAME = "selectedDirectory"
-		private val uidRegex = Regex("""\bUID="[^"]*"""")
+		private val ignoreAttrs = Regex("\\b(UID|ElementRef)=\"[^\"]*\"")
 	}
 
 }
