@@ -11,9 +11,10 @@ module ru.ravel.rcriflayouttool {
 	requires com.fasterxml.jackson.databind;
 
 
-	opens ru.ravel.rcriflayouttool to javafx.fxml;
+	opens ru.ravel.rcriflayouttool to javafx.graphics, com.fasterxml.jackson.databind;
 	opens ru.ravel.rcriflayouttool.model.layout to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	opens ru.ravel.rcriflayouttool.model.procedureproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	opens ru.ravel.rcriflayouttool.model.connectorproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.mappingproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	exports ru.ravel.rcriflayouttool;
 }

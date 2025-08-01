@@ -30,6 +30,7 @@ import org.reactfx.Subscription
 import ru.ravel.rcriflayouttool.dto.*
 import ru.ravel.rcriflayouttool.model.connectorproperties.DataSourceActivityDefinition
 import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
+import ru.ravel.rcriflayouttool.model.mappingproperties.MappingActivityDefinition
 import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
 import java.io.File
 import java.time.Duration
@@ -388,16 +389,57 @@ class RCrifLayoutTool : Application() {
 			10.0,
 			HBox(Label("Название атрибута: "), attributeTextField),
 			attributeTableView,
-		)
+		).apply {
+			padding = Insets(20.0)
+		}
+
+		/* Поиск затираний */
+		val firstColumn = TableColumn<DualParamRow, String>("Первое поле").apply {
+			cellValueFactory = Callback { cellData ->
+				cellData.value.firstField
+			}
+		}
+		val secondColumn = TableColumn<DualParamRow, String>("Второе поле").apply {
+			cellValueFactory = Callback { cellData ->
+				cellData.value.secondField
+			}
+		}
+		val erasuresTableView = TableView<DualParamRow>().apply {
+			columns.setAll(firstColumn, secondColumn)
+			isEditable = true
+		}
+		val erasuresButton = Button("Поиск").apply {
+			setOnAction {
+				val flatMap = searchErasures().flatMap { p ->
+					p.second.map {
+						DualParamRow(SimpleStringProperty(p.first), SimpleStringProperty(it))
+					}
+				}
+				erasuresTableView.items.setAll(flatMap)
+			}
+		}
+		val erasuresBox = VBox(
+			10.0,
+			erasuresButton,
+			erasuresTableView
+		).apply {
+			padding = Insets(20.0)
+		}
 
 		/* Добавление связей */
-		val emptyTabContent = VBox(20.0, Label("Пусто"))
+		val emptyTabContent = VBox(
+			10.0,
+			Label("Пусто")
+		).apply {
+			padding = Insets(20.0)
+		}
 
 		/* Сборка вкладок */
 		val tabPane = TabPane(
 			Tab("Поиск использования процедур", proceduresTabContent).apply { isClosable = false },
 			Tab("Поиск использования коннекторов", connectorsTabContent).apply { isClosable = false },
 			Tab("Поиск атрибутов", attributeBox).apply { isClosable = false },
+			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
 			Tab("Layout marge", margeBp).apply { isClosable = false },
 			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
@@ -996,6 +1038,56 @@ class RCrifLayoutTool : Application() {
 			.map { file -> file.parentFile.name }
 			.toList()
 		return (attributesInProcedures + attributesInMainFlow).distinct()
+	}
+
+
+	private fun searchErasures(): List<Pair<String, List<String>>> {
+		val mapper = XmlMapper()
+
+		val sameNameTemplateRegex = Regex(
+			"""(?s)<\s*xsl:template\s+name\s*=\s*"([^"]+)"\s*>.*?<\s*xsl:element\s+name\s*="\1"\s*/>.*?</\s*xsl:template\s*>""",
+			RegexOption.IGNORE_CASE
+		)
+
+		val erasuresInProcedures = File(selectedDirectory, "Procedures")
+			.walkTopDown()
+			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
+			.filter { file -> sameNameTemplateRegex.containsMatchIn(file.readText()) }
+			.mapNotNull { xsltFile ->
+				val text = xsltFile.readText()
+				val erasedNames = sameNameTemplateRegex.findAll(text)
+					.map { it.groupValues[1] }
+					.toSet()
+				val propsFile = xsltFile.parentFile.resolve("Properties.xml")
+				if (!propsFile.exists()) return@mapNotNull null
+				val def = propsFile.inputStream().use { mapper.readValue(it, MappingActivityDefinition::class.java) }
+				val names = def.referredDocuments.items
+					.filter { it.access.equals("InOut", true) && it.referenceName in erasedNames }
+					.map { it.referenceName }
+				xsltFile.parentFile.name to names
+			}
+			.toList()
+
+		val erasuresInMainFlow = File(selectedDirectory, "MainFlow")
+			.walkTopDown()
+			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
+			.filter { file -> sameNameTemplateRegex.containsMatchIn(file.readText()) }
+			.mapNotNull { xsltFile ->
+				val text = xsltFile.readText()
+				val erasedNames = sameNameTemplateRegex.findAll(text)
+					.map { it.groupValues[1] }
+					.toSet()
+				val propsFile = xsltFile.parentFile.resolve("Properties.xml")
+				if (!propsFile.exists()) return@mapNotNull null
+				val def = propsFile.inputStream().use { mapper.readValue(it, MappingActivityDefinition::class.java) }
+				val names = def.referredDocuments.items
+					.filter { it.access.equals("InOut", true) && it.referenceName in erasedNames }
+					.map { it.referenceName }
+				xsltFile.parentFile.name to names
+			}
+			.toList()
+
+		return (erasuresInMainFlow + erasuresInProcedures)
 	}
 
 
