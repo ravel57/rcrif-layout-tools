@@ -28,7 +28,6 @@ import org.fxmisc.richtext.CodeArea
 import org.fxmisc.richtext.LineNumberFactory
 import org.fxmisc.richtext.model.StyleSpansBuilder
 import org.fxmisc.richtext.model.TwoDimensional.Bias
-import org.reactfx.EventStream
 import org.reactfx.Subscription
 import ru.ravel.rcriflayouttool.dto.*
 import ru.ravel.rcriflayouttool.model.connectorproperties.DataSourceActivityDefinition
@@ -38,7 +37,9 @@ import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityD
 import java.io.File
 import java.time.Duration
 import java.util.*
+import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -51,6 +52,8 @@ class RCrifLayoutTool : Application() {
 	private var layoutActivitiesCache: List<ActivitiesForMenu> = emptyList()
 	private var subscription: Subscription? = null
 	private val suspendSync = SimpleBooleanProperty(false)
+	private val isUpdating = AtomicBoolean(false)
+	private var currentDiffTask: Task<Triple<List<String>, List<String>, DiffResult>>? = null
 
 	private val diffNav = mutableListOf<DiffNav>()
 	private var diffIdx = -1
@@ -279,23 +282,44 @@ class RCrifLayoutTool : Application() {
 
 		val margeArea1 = CodeArea()
 		val margeArea2 = CodeArea()
-		val prevBtn = Button("◀").apply { isDisable = true; setOnAction { gotoDiff(-1, margeArea1, margeArea2) } }
-		val nextBtn = Button("▶").apply { isDisable = true; setOnAction { gotoDiff(+1, margeArea1, margeArea2) } }
+		val prevBtn = Button("◀").apply {
+			isDisable = true
+		}
+		val nextBtn = Button("▶").apply {
+			isDisable = true
+		}
+
+		prevBtn.setOnAction {
+			gotoDiff(-1, margeArea1, margeArea2)
+			updateNavButtons(prevBtn, nextBtn)
+		}
+		nextBtn.setOnAction {
+			gotoDiff(+1, margeArea1, margeArea2)
+			updateNavButtons(prevBtn, nextBtn)
+		}
 
 		val scroll1 = VirtualizedScrollPane(margeArea1)
 		val scroll2 = VirtualizedScrollPane(margeArea2)
 		val wrapped1 = wrapWithGrayFiller(scroll1).apply { maxHeight = Double.MAX_VALUE }
 		val wrapped2 = wrapWithGrayFiller(scroll2).apply { maxHeight = Double.MAX_VALUE }
 
+
+		val textLoadIndicator = ProgressIndicator().apply {
+			isVisible = false
+			maxWidth = 20.0
+			maxHeight = 20.0
+		}
+
 		bindScrollSync(scroll1, scroll2)
-		subscribeToChanges(margeArea1, margeArea2, prevBtn, nextBtn)
+		subscribeToChanges(margeArea1, margeArea2, prevBtn, nextBtn, textLoadIndicator)
 
 		val panesHBox = HBox(
 			4.0,
 			Label("Layout: "),
 			mergeComboBox,
 			prevBtn,
-			nextBtn
+			nextBtn,
+			textLoadIndicator,
 		).apply {
 			spacing = 4.0
 			isFillHeight = true
@@ -589,47 +613,48 @@ class RCrifLayoutTool : Application() {
 		val master = SimpleObjectProperty<VirtualizedScrollPane<*>?>(null)
 		val idle = PauseTransition(FxDuration.millis(150.0)).apply {
 			setOnFinished {
-				if (!suspendSync.get()) master.set(null)
+				if (!suspendSync.get()) {
+					master.set(null)
+				}
 			}
 		}
 
 		fun ratioOf(p: VirtualizedScrollPane<*>): Double {
 			val total = p.totalHeightEstimate
 			if (total <= 0.0) return 0.0
-			val r = p.estimatedScrollY / total
-			return r.coerceIn(0.0, 1.0)
+			return (p.estimatedScrollY / total).coerceIn(0.0, 1.0)
 		}
 
 		fun applyRatio(src: VirtualizedScrollPane<*>, dst: VirtualizedScrollPane<*>) {
 			val total = dst.totalHeightEstimate
-			if (total <= 0.0) return
+			if (total <= 0.0) {
+				return
+			}
 			val targetY = ratioOf(src) * total
-			// отсечь «дрожание» из-за округлений/пересчёта высоты контента
-			if (abs(dst.estimatedScrollY - targetY) < 0.5) return
+			if (abs(dst.estimatedScrollY - targetY) < 0.5) {
+				return
+			}
 			dst.scrollYToPixel(targetY)
 		}
 
 		fun wire(src: VirtualizedScrollPane<*>, dst: VirtualizedScrollPane<*>) {
-			// Любое пользовательское действие делает src «мастером»
 			src.addEventFilter(ScrollEvent.SCROLL) {
 				if (suspendSync.get()) return@addEventFilter
 				master.set(src)
 				applyRatio(src, dst)
 				idle.playFromStart()
 			}
-			src.setOnMousePressed {
-				if (!suspendSync.get()) master.set(src)
-			}
-			// Реакция только на изменения мастера
-			src.estimatedScrollYProperty().addListener { _, _, _ ->
+			src.setOnMousePressed { if (!suspendSync.get()) master.set(src) }
+			src.estimatedScrollYProperty().addListener { _, oldY, newY ->
 				if (suspendSync.get()) return@addListener
+				if (master.get() == null && abs(newY.toDouble() - oldY.toDouble()) > 0.5)
+					master.set(src)
 				if (master.get() === src) {
 					applyRatio(src, dst)
 					idle.playFromStart()
 				}
 			}
 		}
-
 		wire(p1, p2)
 		wire(p2, p1)
 	}
@@ -638,30 +663,69 @@ class RCrifLayoutTool : Application() {
 		area1: CodeArea,
 		area2: CodeArea,
 		prevBtn: Button,
-		nextBtn: Button
+		nextBtn: Button,
+		diffProgress: ProgressIndicator
 	) {
-		val changes: EventStream<*> = area1.plainTextChanges().or(area2.plainTextChanges())
-		subscription = changes
-			.threadBridgeFromFx(diffExecutor)
+		diffProgress.visibleProperty().unbind()
+		diffProgress.visibleProperty().bind(
+			Bindings.createBooleanBinding(
+				{ currentDiffTask?.isRunning == true },
+				SimpleObjectProperty(currentDiffTask)
+			)
+		)
+		area1.plainTextChanges().or(area2.plainTextChanges())
 			.successionEnds(Duration.ofMillis(500))
-			.map { Pair(area1.text.lines(), area2.text.lines()) }
-			.map { (l1, l2) -> buildSpansAndNav(l1, l2) }
-			.threadBridgeToFx(diffExecutor)
-			.subscribe { (spansL, spansR, nav, _, _) ->
-				area1.setStyleSpans(0, spansL)
-				area2.setStyleSpans(0, spansR)
-				diffNav.clear()
-				diffNav.addAll(nav)
-				diffIdx = if (nav.isEmpty()) -1 else 0
-				val enabled = nav.isNotEmpty()
-				prevBtn.isDisable = !enabled
-				nextBtn.isDisable = !enabled
-				if (enabled) gotoDiff(0, area1, area2)
-				area1.paragraphGraphicFactory = LineNumberFactory.get(area1)
-				area2.paragraphGraphicFactory = LineNumberFactory.get(area2)
+			.subscribe {
+				if (isUpdating.get()) return@subscribe
+				currentDiffTask?.cancel()
+				val origL = area1.text.lines()
+				val origR = area2.text.lines()
+				val task = object : Task<Triple<List<String>, List<String>, DiffResult>>() {
+					override fun call(): Triple<List<String>, List<String>, DiffResult> {
+						// Проверим отмену до и после тяжёлых шагов
+						if (isCancelled) throw CancellationException()
+						val (lA, rA) = padLinesForDiff(origL, origR)
+						if (isCancelled) throw CancellationException()
+						val diff = buildSpansAndNav(lA, rA)
+						if (isCancelled) throw CancellationException()
+						return Triple(lA, rA, diff)
+					}
+				}
+				currentDiffTask = task
+				task.setOnSucceeded {
+					val (lA, rA, diff) = task.value
+					isUpdating.set(true)
+					try {
+						val newL = lA.joinToString("\n")
+						val newR = rA.joinToString("\n")
+						if (area1.text != newL) area1.replaceText(newL)
+						if (area2.text != newR) area2.replaceText(newR)
+						val (spansL, spansR, nav, _, _) = diff
+						area1.setStyleSpans(0, spansL)
+						area2.setStyleSpans(0, spansR)
+
+						diffNav.clear()
+						diffNav.addAll(nav)
+						diffIdx = if (nav.isEmpty()) -1 else 0
+						prevBtn.isDisable = diffNav.isEmpty() || diffIdx <= 0
+						nextBtn.isDisable = diffNav.isEmpty() || diffIdx >= diffNav.lastIndex
+
+						if (nav.isNotEmpty()) {
+							gotoDiff(0, area1, area2)
+							updateNavButtons(prevBtn, nextBtn)
+						} else {
+							prevBtn.isDisable = true
+							nextBtn.isDisable = true
+						}
+					} finally {
+						isUpdating.set(false)
+					}
+				}
+				task.setOnCancelled { System.err.println(it) }
+				task.setOnFailed { System.err.println(it) }
+				Thread(task).apply { isDaemon = true }.start()
 			}
 	}
-
 
 	private fun recalculateDiff(
 		area1: CodeArea,
@@ -670,9 +734,13 @@ class RCrifLayoutTool : Application() {
 		nextBtn: Button,
 	) {
 		if (area1.text.isNotBlank() && area2.text.isNotBlank()) {
-			val lines1 = area1.text.lines()
-			val lines2 = area2.text.lines()
-			val (spansL, spansR, nav, _, _) = buildSpansAndNav(lines1, lines2)
+			val (lA, rA) = padLinesForDiff(area1.text.lines(), area2.text.lines())
+			val leftText = lA.joinToString("\n")
+			val rightText = rA.joinToString("\n")
+			if (area1.text != leftText) area1.replaceText(leftText)
+			if (area2.text != rightText) area2.replaceText(rightText)
+
+			val (spansL, spansR, nav, _, _) = buildSpansAndNav(lA, rA)
 			area1.setStyleSpans(0, spansL)
 			area2.setStyleSpans(0, spansR)
 			area1.paragraphGraphicFactory = LineNumberFactory.get(area1)
@@ -681,15 +749,15 @@ class RCrifLayoutTool : Application() {
 			diffNav.clear()
 			diffNav.addAll(nav)
 			diffIdx = if (diffNav.isEmpty()) -1 else 0
-			val enabled = diffNav.isNotEmpty()
-			prevBtn.isDisable = !enabled
-			nextBtn.isDisable = !enabled
-			if (enabled) {
+			if (diffNav.isNotEmpty()) {
 				gotoDiff(0, area1, area2)
+				updateNavButtons(prevBtn, nextBtn)
+			} else {
+				prevBtn.isDisable = true
+				nextBtn.isDisable = true
 			}
-
-			highlightDiff(area1, lines1, lines2, changeStyle = "diff-delete")
-			highlightDiff(area2, lines2, lines1, changeStyle = "diff-insert")
+			highlightDiff(area1, lA, rA, changeStyle = "diff-delete")
+			highlightDiff(area2, rA, lA, changeStyle = "diff-insert")
 		}
 	}
 
@@ -955,7 +1023,6 @@ class RCrifLayoutTool : Application() {
 	}
 
 
-
 	private fun wrapWithGrayFiller(scroll: VirtualizedScrollPane<*>): StackPane {
 		val filler = Rectangle().apply {
 			fill = Color.LIGHTGRAY
@@ -1103,6 +1170,101 @@ class RCrifLayoutTool : Application() {
 			.toList()
 
 		return (erasuresInMainFlow + erasuresInProcedures)
+	}
+
+
+	/**
+	 * Выравнивает документы по высоте, вставляя "" (виртуальные строки)
+	 * там, где в одном документе есть строка, а в другом – нет.
+	 *
+	 * @return Pair( leftAligned, rightAligned )
+	 *
+	 * Пример использования:
+	 *     val (alignedL, alignedR) = padLinesForDiff(linesL, linesR)
+	 *     areaLeft.replaceText(alignedL.joinToString("\n"))
+	 *     areaRight.replaceText(alignedR.joinToString("\n"))
+	 *     val diff = buildSpansAndNav(alignedL, alignedR)
+	 */
+	private fun padLinesForDiff(
+		left: List<String>,
+		right: List<String>
+	): Pair<List<String>, List<String>> {
+		fun List<String>.clean() = map { s ->
+			s.replace(ignoreAttrs) { m -> "${m.groupValues[1]}=\"\"" }
+		}
+
+		val cleanL = left.clean()
+		val cleanR = right.clean()
+
+		// 2. Считаем отличия
+		val deltas = DiffUtils
+			.diff(cleanL, cleanR)
+			.deltas
+			.sortedBy { it.source.position }
+
+		val outL = mutableListOf<String>()
+		val outR = mutableListOf<String>()
+
+		var li = 0
+		var ri = 0
+
+		fun emitCommon(toLi: Int, toRi: Int) {
+			while (li < toLi && ri < toRi) {
+				outL += left[li]
+				outR += right[ri]
+				li++; ri++
+			}
+		}
+
+		for (d in deltas) {
+			emitCommon(d.source.position, d.target.position)
+
+			when (d.type) {
+				DeltaType.DELETE -> {
+					repeat(d.source.lines.size) {
+						outL += left[li]
+						outR += ""
+						li++
+					}
+				}
+
+				DeltaType.INSERT -> {
+					repeat(d.target.lines.size) {
+						outL += ""
+						outR += right[ri]
+						ri++
+					}
+				}
+
+				DeltaType.CHANGE -> {
+					val lCnt = d.source.lines.size
+					val rCnt = d.target.lines.size
+					val maxCnt = max(lCnt, rCnt)
+					for (j in 0 until maxCnt) {
+						outL += if (j < lCnt) left[li + j] else ""
+						outR += if (j < rCnt) right[ri + j] else ""
+					}
+					li += lCnt
+					ri += rCnt
+				}
+
+				else -> {
+				}
+			}
+		}
+		while (li < left.size || ri < right.size) {
+			outL += if (li < left.size) left[li++] else ""
+			outR += if (ri < right.size) right[ri++] else ""
+		}
+
+		return outL to outR
+	}
+
+
+	private fun updateNavButtons(prevBtn: Button, nextBtn: Button) {
+		val empty = diffNav.isEmpty()
+		prevBtn.isDisable = empty || diffIdx <= 0
+		nextBtn.isDisable = empty || diffIdx >= diffNav.lastIndex
 	}
 
 

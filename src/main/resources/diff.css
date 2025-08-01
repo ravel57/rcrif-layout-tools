@@ -49,9 +49,14 @@
 .lineno:marked {
     /* два слоя фона: 1) прозрачный, 2) кружок */
     -fx-background-color: transparent, #1e8e3e;
-    -fx-background-insets: 0, 0;              /* без дополнительных отступов */
-    -fx-background-radius: 0, 3;              /* радиус кружка 3px */
-    -fx-background-size: 6 6, 6 6;            /* диаметр 6px */
-    -fx-background-position: 6px center, 6px center;  /* смещение внутрь на 6px */
+    -fx-background-insets: 0, 0;
+    -fx-background-radius: 0, 3;
+    -fx-background-size: 6 6, 6 6;
+    -fx-background-position: 6px center, 6px center;
     -fx-background-repeat: no-repeat;
+}
+
+.diff-blank {
+    -fx-fill: transparent;
+    -fx-background-color: derive(#a0a0a0, 60%);
 }
