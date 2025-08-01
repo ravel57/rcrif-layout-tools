@@ -3,9 +3,12 @@ package ru.ravel.rcriflayouttool
 import com.fasterxml.jackson.dataformat.xml.XmlMapper
 import com.github.difflib.DiffUtils
 import com.github.difflib.patch.DeltaType
+import javafx.animation.PauseTransition
 import javafx.application.Application
 import javafx.application.Platform
 import javafx.beans.binding.Bindings
+import javafx.beans.property.SimpleBooleanProperty
+import javafx.beans.property.SimpleObjectProperty
 import javafx.beans.property.SimpleStringProperty
 import javafx.collections.FXCollections
 import javafx.collections.transformation.FilteredList
@@ -36,9 +39,10 @@ import java.io.File
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import javafx.util.Duration as FxDuration
 
 
 class RCrifLayoutTool : Application() {
@@ -46,6 +50,7 @@ class RCrifLayoutTool : Application() {
 	private var selectedDirectory: File? = null
 	private var layoutActivitiesCache: List<ActivitiesForMenu> = emptyList()
 	private var subscription: Subscription? = null
+	private val suspendSync = SimpleBooleanProperty(false)
 
 	private val diffNav = mutableListOf<DiffNav>()
 	private var diffIdx = -1
@@ -581,29 +586,52 @@ class RCrifLayoutTool : Application() {
 
 
 	private fun bindScrollSync(p1: VirtualizedScrollPane<*>, p2: VirtualizedScrollPane<*>) {
-		val guard = AtomicBoolean(false)
-
-		fun clampRatio(r: Double) = r.coerceIn(0.0, 1.0)
-
-		listOf(p1 to p2, p2 to p1).forEach { (src, dst) ->
-			src.addEventFilter(ScrollEvent.SCROLL) { ev ->
-				if (ev.deltaY == 0.0 || !guard.compareAndSet(false, true)) return@addEventFilter
-				dst.scrollYBy(-ev.deltaY)
-				guard.set(false)
+		val master = SimpleObjectProperty<VirtualizedScrollPane<*>?>(null)
+		val idle = PauseTransition(FxDuration.millis(150.0)).apply {
+			setOnFinished {
+				if (!suspendSync.get()) master.set(null)
 			}
-			src.estimatedScrollYProperty().addListener { _, _, newY ->
-				if (!guard.compareAndSet(false, true)) return@addListener
-				Platform.runLater {
-					val totalSrcVal = src.totalHeightEstimateProperty().value
-					val totalDstVal = dst.totalHeightEstimateProperty().value
-					if (totalSrcVal != null && totalDstVal != null && totalSrcVal > 0 && totalDstVal > 0) {
-						val ratio = clampRatio(newY.toDouble() / totalSrcVal)
-						dst.scrollYToPixel(ratio * totalDstVal)
-					}
-					guard.set(false)
+		}
+
+		fun ratioOf(p: VirtualizedScrollPane<*>): Double {
+			val total = p.totalHeightEstimate
+			if (total <= 0.0) return 0.0
+			val r = p.estimatedScrollY / total
+			return r.coerceIn(0.0, 1.0)
+		}
+
+		fun applyRatio(src: VirtualizedScrollPane<*>, dst: VirtualizedScrollPane<*>) {
+			val total = dst.totalHeightEstimate
+			if (total <= 0.0) return
+			val targetY = ratioOf(src) * total
+			// отсечь «дрожание» из-за округлений/пересчёта высоты контента
+			if (abs(dst.estimatedScrollY - targetY) < 0.5) return
+			dst.scrollYToPixel(targetY)
+		}
+
+		fun wire(src: VirtualizedScrollPane<*>, dst: VirtualizedScrollPane<*>) {
+			// Любое пользовательское действие делает src «мастером»
+			src.addEventFilter(ScrollEvent.SCROLL) {
+				if (suspendSync.get()) return@addEventFilter
+				master.set(src)
+				applyRatio(src, dst)
+				idle.playFromStart()
+			}
+			src.setOnMousePressed {
+				if (!suspendSync.get()) master.set(src)
+			}
+			// Реакция только на изменения мастера
+			src.estimatedScrollYProperty().addListener { _, _, _ ->
+				if (suspendSync.get()) return@addListener
+				if (master.get() === src) {
+					applyRatio(src, dst)
+					idle.playFromStart()
 				}
 			}
 		}
+
+		wire(p1, p2)
+		wire(p2, p1)
 	}
 
 	private fun subscribeToChanges(
@@ -777,18 +805,13 @@ class RCrifLayoutTool : Application() {
 	 *  — список пар координат DiffNav (диапазоны отличий в обоих документах).
 	 */
 	private fun buildSpansAndNav(left: List<String>, right: List<String>): DiffResult {
-//		if (text1 == lastText1 && text2 == lastText2) return
 		val deleted = mutableListOf<Int>()
 		val inserted = mutableListOf<Int>()
 		val cleanL = left.map { line ->
-			line.replace(ignoreAttrs) { m ->
-				"${m.groupValues[1]}=\"\""
-			}
+			line.replace(ignoreAttrs) { m -> "${m.groupValues[1]}=\"\"" }
 		}
 		val cleanR = right.map { line ->
-			line.replace(ignoreAttrs) { m ->
-				"${m.groupValues[1]}=\"\""
-			}
+			line.replace(ignoreAttrs) { m -> "${m.groupValues[1]}=\"\"" }
 		}
 		val deltas = DiffUtils.diff(cleanL, cleanR).deltas.sortedBy { it.source.position }
 		val spansL = StyleSpansBuilder<Collection<String>>()
@@ -804,6 +827,8 @@ class RCrifLayoutTool : Application() {
 		fun addInsR(len: Int) = spansR.add(listOf("diff-insert"), len)
 		fun lenL(i: Int) = left[i].length + if (i < left.lastIndex) 1 else 0
 		fun lenR(i: Int) = right[i].length + if (i < right.lastIndex) 1 else 0
+		fun endChar(starts: IntArray, lines: List<String>, idx: Int) = starts[idx] + lines[idx].length
+
 		for (d in deltas) {
 			while (li < d.source.position) {
 				addPlainL(lenL(li)); li++
@@ -811,40 +836,39 @@ class RCrifLayoutTool : Application() {
 			while (ri < d.target.position) {
 				addPlainR(lenR(ri)); ri++
 			}
+			val lCount = d.source.lines.size
+			val rCount = d.target.lines.size
+			val lStartIdx: Int? = if (lCount > 0) li else null
+			val lEndIdx: Int? = if (lCount > 0) li + lCount - 1 else null
+			val rStartIdx: Int? = if (rCount > 0) ri else null
+			val rEndIdx: Int? = if (rCount > 0) ri + rCount - 1 else null
+
 			when (d.type) {
 				DeltaType.DELETE -> {
-					d.source.lines.forEachIndexed { j, s ->
+					d.source.lines.forEachIndexed { j, _ ->
 						deleted += li + j
 						addDelL(lenL(li + j))
-						nav += DiffNav(
-							lStart = startsL[li + j], lEnd = startsL[li + j] + s.length,
-							rStart = null, rEnd = null
-						)
 					}
-					li += d.source.lines.size
+					li += lCount
 				}
 
 				DeltaType.INSERT -> {
-					d.target.lines.forEachIndexed { j, s ->
+					d.target.lines.forEachIndexed { j, _ ->
 						inserted += ri + j
 						addInsR(lenR(ri + j))
-						nav += DiffNav(
-							lStart = null, lEnd = null,
-							rStart = startsR[ri + j], rEnd = startsR[ri + j] + s.length
-						)
 					}
-					ri += d.target.lines.size
+					ri += rCount
 				}
 
 				DeltaType.CHANGE -> {
-					if (d.source.lines.size != d.target.lines.size) {
+					if (lCount != rCount) {
 						d.source.lines.indices.forEach { j -> deleted += li + j }
 						d.target.lines.indices.forEach { j -> inserted += ri + j }
 					} else {
-						deleted += li
-						inserted += ri
+						if (lCount > 0) deleted += li
+						if (rCount > 0) inserted += ri
 					}
-					val m = max(d.source.lines.size, d.target.lines.size)
+					val m = max(lCount, rCount)
 					for (j in 0 until m) {
 						val sL = d.source.lines.getOrNull(j)
 						val sR = d.target.lines.getOrNull(j)
@@ -855,90 +879,81 @@ class RCrifLayoutTool : Application() {
 							val pref = orig.commonPrefixWith(neu).length
 							val maxS = min(orig.length, neu.length) - pref
 							var suf = 0
-							while (suf < maxS && orig[orig.length - 1 - suf] == neu[neu.length - 1 - suf]) {
-								suf++
-							}
+							while (suf < maxS && orig[orig.length - 1 - suf] == neu[neu.length - 1 - suf]) suf++
+
 							if (pref > 0) addPlainL(pref)
 							val diffL = orig.length - pref - suf
 							if (diffL > 0) addDelL(diffL)
-							addPlainL(suf + if (li < left.lastIndex) 1 else 0)
+							addPlainL(suf + if (li + j < left.lastIndex) 1 else 0)
+
 							if (pref > 0) addPlainR(pref)
 							val diffR = neu.length - pref - suf
 							if (diffR > 0) addInsR(diffR)
-							addPlainR(suf + if (ri < right.lastIndex) 1 else 0)
-							val lStart = startsL[li] + pref
-							val rStart = startsR[ri] + pref
-							nav += DiffNav(
-								lStart = if (diffL > 0) lStart else null,
-								lEnd = if (diffL > 0) lStart + diffL else null,
-								rStart = if (diffR > 0) rStart else null,
-								rEnd = if (diffR > 0) rStart + diffR else null,
-							)
-							li++; ri++
+							addPlainR(suf + if (ri + j < right.lastIndex) 1 else 0)
 						} else if (sL != null) {
-							addDelL(lenL(li))
+							addDelL(lenL(li + j))
 							addPlainR(0)
-							nav += DiffNav(
-								lStart = startsL[li], lEnd = startsL[li] + sL.length,
-								rStart = null, rEnd = null
-							)
-							li++
 						} else {
 							addPlainL(0)
-							addInsR(lenR(ri))
-							nav += DiffNav(
-								lStart = null, lEnd = null,
-								rStart = startsR[ri], rEnd = startsR[ri] + sR!!.length
-							)
-							ri++
+							addInsR(lenR(ri + j))
 						}
 					}
-				}
-
-				DeltaType.EQUAL -> {
-					d.source.lines.forEach { _ ->
-						addPlainL(lenL(li)); addPlainR(lenR(ri))
-						li++; ri++
-					}
+					li += lCount
+					ri += rCount
 				}
 
 				else -> {
+					/* EQUAL не приходит сюда */
 				}
 			}
+			val lStartChar = lStartIdx?.let { startsL[it] }
+			val lEndChar = lEndIdx?.let { endChar(startsL, left, it) }
+			val rStartChar = rStartIdx?.let { startsR[it] }
+			val rEndChar = rEndIdx?.let { endChar(startsR, right, it) }
+
+			if (lStartChar != null || rStartChar != null) {
+				nav += DiffNav(
+					lStart = lStartChar, lEnd = lEndChar,
+					rStart = rStartChar, rEnd = rEndChar
+				)
+			}
 		}
+
+		// добить «хвост» равных зон
 		while (li < left.size) {
 			addPlainL(lenL(li)); li++
 		}
 		while (ri < right.size) {
 			addPlainR(lenR(ri)); ri++
 		}
+
 		return DiffResult(spansL.create(), spansR.create(), nav.toList(), deleted, inserted)
 	}
 
 
-	private fun gotoDiff(step: Int, margeArea1: CodeArea, margeArea2: CodeArea) {
-		if (diffNav.isEmpty()) {
-			return
-		}
+	private fun gotoDiff(step: Int, area1: CodeArea, area2: CodeArea) {
+		if (diffNav.isEmpty()) return
 		diffIdx = (diffIdx + step).coerceIn(0, diffNav.lastIndex)
 		val d = diffNav[diffIdx]
-		d.lStart?.let { s ->
-			margeArea1.selectRange(s, d.lEnd!!)
-		}
-		d.rStart?.let { s ->
-			margeArea2.selectRange(s, d.rEnd!!)
-		}
+
+		d.lStart?.let { s -> area1.selectRange(s, d.lEnd!!) }
+		d.rStart?.let { s -> area2.selectRange(s, d.rEnd!!) }
+		suspendSync.set(true)
 		Platform.runLater {
 			d.lStart?.let { s ->
-				val p = margeArea1.offsetToPosition(s, Bias.Forward).major
-				margeArea1.showParagraphAtCenter(p)
+				val p = area1.offsetToPosition(s, Bias.Forward).major
+				area1.showParagraphAtCenter(p)
 			}
 			d.rStart?.let { s ->
-				val p = margeArea2.offsetToPosition(s, Bias.Forward).major
-				margeArea2.showParagraphAtCenter(p)
+				val p = area2.offsetToPosition(s, Bias.Forward).major
+				area2.showParagraphAtCenter(p)
 			}
+			PauseTransition(FxDuration.millis(180.0)).apply {
+				setOnFinished { suspendSync.set(false) }
+			}.play()
 		}
 	}
+
 
 
 	private fun wrapWithGrayFiller(scroll: VirtualizedScrollPane<*>): StackPane {
