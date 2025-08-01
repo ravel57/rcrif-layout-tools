@@ -313,9 +313,6 @@ class RCrifLayoutTool : Application() {
 		}
 		VBox.setVgrow(margeBp, Priority.ALWAYS)
 
-		/* Добавление связей */
-		val emptyTabContent = VBox(20.0, Label("Пусто"))
-
 		/* Неиспользуемые процедуры */
 		val unusedProcedureTableColumn = TableColumn<ParamRow, String>("Название процедуры").apply {
 			cellValueFactory = Callback { it.value.field }
@@ -335,8 +332,6 @@ class RCrifLayoutTool : Application() {
 			setOnAction {
 				isDisable = true
 				unusedProceduresProgress.isVisible = true
-
-				// Фоновая задача
 				val task = object : Task<List<ParamRow>>() {
 					override fun call(): List<ParamRow> {
 						val dir = selectedDirectory ?: return emptyList()
@@ -373,10 +368,36 @@ class RCrifLayoutTool : Application() {
 			padding = Insets(20.0)
 		}
 
+		/* Поиск атрибутов  */
+		val attributeTableColumn = TableColumn<ParamRow, String>("Название активности").apply {
+			cellValueFactory = Callback { it.value.field }
+			isEditable = true
+		}
+		val attributeTableView = TableView<ParamRow>().apply {
+			columns.addAll(attributeTableColumn)
+			isEditable = true
+		}
+		val attributeTextField = TextField().apply {
+			textProperty().addListener { _, _, newValue ->
+				val attributes = searchAttribute(newValue)
+				attributeTableView.items.setAll(attributes.map { ParamRow(SimpleStringProperty(it)) })
+			}
+		}
+		attributeTableColumn.prefWidthProperty().bind(attributeTableView.widthProperty().subtract(2.0))
+		val attributeBox = VBox(
+			10.0,
+			HBox(Label("Название атрибута: "), attributeTextField),
+			attributeTableView,
+		)
+
+		/* Добавление связей */
+		val emptyTabContent = VBox(20.0, Label("Пусто"))
+
 		/* Сборка вкладок */
 		val tabPane = TabPane(
 			Tab("Поиск использования процедур", proceduresTabContent).apply { isClosable = false },
 			Tab("Поиск использования коннекторов", connectorsTabContent).apply { isClosable = false },
+			Tab("Поиск атрибутов", attributeBox).apply { isClosable = false },
 			Tab("Layout marge", margeBp).apply { isClosable = false },
 			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
@@ -556,7 +577,7 @@ class RCrifLayoutTool : Application() {
 			.map { Pair(area1.text.lines(), area2.text.lines()) }
 			.map { (l1, l2) -> buildSpansAndNav(l1, l2) }
 			.threadBridgeToFx(diffExecutor)
-			.subscribe { (spansL, spansR, nav, deletedLines, insertedLines) ->
+			.subscribe { (spansL, spansR, nav, _, _) ->
 				area1.setStyleSpans(0, spansL)
 				area2.setStyleSpans(0, spansR)
 				diffNav.clear()
@@ -581,7 +602,7 @@ class RCrifLayoutTool : Application() {
 		if (area1.text.isNotBlank() && area2.text.isNotBlank()) {
 			val lines1 = area1.text.lines()
 			val lines2 = area2.text.lines()
-			val (spansL, spansR, nav, deletedLines, insertedLines) = buildSpansAndNav(lines1, lines2)
+			val (spansL, spansR, nav, _, _) = buildSpansAndNav(lines1, lines2)
 			area1.setStyleSpans(0, spansL)
 			area2.setStyleSpans(0, spansR)
 			area1.paragraphGraphicFactory = LineNumberFactory.get(area1)
@@ -913,45 +934,68 @@ class RCrifLayoutTool : Application() {
 	}
 
 
-	private fun alignForDisplay(leftText: String, rightText: String): Pair<String, String> {
-		val left = leftText.lines().toMutableList()
-		val right = rightText.lines().toMutableList()
-		fun clean(xs: List<String>) = xs.map { it.replace(Regex("""\bUID="[^"]*""""), """UID=""") }
-		val deltas = DiffUtils.diff(clean(left), clean(right)).deltas.sortedBy { it.source.position }
-		var lOff = 0
-		var rOff = 0
-		for (d in deltas) {
-			val lp = d.source.position + lOff
-			val rp = d.target.position + rOff
-			when (d.type) {
-				DeltaType.DELETE -> {
-					repeat(d.source.lines.size) { i -> right.add(rp + i, ""); rOff++ }
-				}
-
-				DeltaType.INSERT -> {
-					repeat(d.target.lines.size) { i -> left.add(lp + i, ""); lOff++ }
-				}
-
-				DeltaType.CHANGE -> {
-					val dl = d.source.lines.size
-					val dr = d.target.lines.size
-					when {
-						dl < dr -> repeat(dr - dl) { i -> left.add(lp + dl + i, ""); lOff++ }
-						dl > dr -> repeat(dl - dr) { i -> right.add(rp + dr + i, ""); rOff++ }
-					}
-				}
-
-				else -> {
-					/* EQUAL не трогаем */
-				}
-			}
-		}
-		return left.joinToString("\n") to right.joinToString("\n")
-	}
+//	private fun alignForDisplay(leftText: String, rightText: String): Pair<String, String> {
+//		val left = leftText.lines().toMutableList()
+//		val right = rightText.lines().toMutableList()
+//		fun clean(xs: List<String>) = xs.map { it.replace(Regex("""\bUID="[^"]*""""), """UID=""") }
+//		val deltas = DiffUtils.diff(clean(left), clean(right)).deltas.sortedBy { it.source.position }
+//		var lOff = 0
+//		var rOff = 0
+//		for (d in deltas) {
+//			val lp = d.source.position + lOff
+//			val rp = d.target.position + rOff
+//			when (d.type) {
+//				DeltaType.DELETE -> {
+//					repeat(d.source.lines.size) { i -> right.add(rp + i, ""); rOff++ }
+//				}
+//
+//				DeltaType.INSERT -> {
+//					repeat(d.target.lines.size) { i -> left.add(lp + i, ""); lOff++ }
+//				}
+//
+//				DeltaType.CHANGE -> {
+//					val dl = d.source.lines.size
+//					val dr = d.target.lines.size
+//					when {
+//						dl < dr -> repeat(dr - dl) { i -> left.add(lp + dl + i, ""); lOff++ }
+//						dl > dr -> repeat(dl - dr) { i -> right.add(rp + dr + i, ""); rOff++ }
+//					}
+//				}
+//
+//				else -> {
+//					/* EQUAL не трогаем */
+//				}
+//			}
+//		}
+//		return left.joinToString("\n") to right.joinToString("\n")
+//	}
 
 
 	private val diffExecutor = Executors.newSingleThreadExecutor { r ->
 		Thread(r, "diff-pool").apply { isDaemon = true }
+	}
+
+
+	private fun searchAttribute(attributeName: String): List<String> {
+		val regex = Regex(
+			pattern = """<\s*xsl:attribute\s+name\s*=\s*"$attributeName"\s*>""",
+			options = setOf(RegexOption.IGNORE_CASE)
+		)
+
+		val attributesInProcedures = File(selectedDirectory, "Procedures")
+			.walkTopDown()
+			.filter { it.isFile && it.extension == "xslt" }
+			.filter { file -> regex.containsMatchIn(file.readText()) }
+			.map { file -> file.parentFile.name }
+			.toList()
+
+		val attributesInMainFlow = File(selectedDirectory, "MainFlow")
+			.walkTopDown()
+			.filter { it.isFile && it.extension == "xslt" }
+			.filter { file -> regex.containsMatchIn(file.readText()) }
+			.map { file -> file.parentFile.name }
+			.toList()
+		return (attributesInProcedures + attributesInMainFlow).distinct()
 	}
 
 
