@@ -60,3 +60,7 @@
     -fx-fill: transparent;
     -fx-background-color: derive(#a0a0a0, 60%);
 }
+
+.search-highlight {
+    -fx-background-color: lightgreen;
+}

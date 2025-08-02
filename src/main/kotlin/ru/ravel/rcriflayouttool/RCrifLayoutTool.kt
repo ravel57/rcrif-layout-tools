@@ -21,6 +21,7 @@ import javafx.scene.layout.*
 import javafx.scene.paint.Color
 import javafx.scene.shape.Rectangle
 import javafx.stage.DirectoryChooser
+import javafx.stage.Modality
 import javafx.stage.Stage
 import javafx.util.Callback
 import org.fxmisc.flowless.VirtualizedScrollPane
@@ -40,6 +41,7 @@ import java.util.*
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.regex.Pattern
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -144,7 +146,8 @@ class RCrifLayoutTool : Application() {
 				folderField.text = lastPath
 				allProcedures.setAll(File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList())
 				allConnectors.setAll(getAllConnectors(lastPath).map { it.connectorName }.distinct())
-				allMarge.setAll(File(selectedDirectory, "Procedures").list()
+				allMarge.setAll(
+					File(selectedDirectory, "Procedures").list()
 					?.sorted()
 					?.toMutableList()
 					?.apply { add(0, "MainFlow") }
@@ -166,7 +169,8 @@ class RCrifLayoutTool : Application() {
 					saveSelectedPath(selectedDirectory!!.absolutePath)
 					allProcedures.setAll(File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList())
 					allConnectors.setAll(getAllConnectors(selectedDirectory!!.absolutePath).map { it.connectorName }.distinct())
-					allMarge.setAll(File(selectedDirectory, "Procedures").list()
+					allMarge.setAll(
+						File(selectedDirectory, "Procedures").list()
 						?.sorted()
 						?.toMutableList()
 						?.apply { add(0, "MainFlow") }
@@ -289,6 +293,10 @@ class RCrifLayoutTool : Application() {
 			isDisable = true
 		}
 
+		val openSearchBtn = Button("🔍 Поиск").apply {
+			setOnAction { showSearchWindow(margeArea1, margeArea2) }
+		}
+
 		prevBtn.setOnAction {
 			gotoDiff(-1, margeArea1, margeArea2)
 			updateNavButtons(prevBtn, nextBtn)
@@ -320,6 +328,7 @@ class RCrifLayoutTool : Application() {
 			prevBtn,
 			nextBtn,
 			textLoadIndicator,
+			openSearchBtn,
 		).apply {
 			spacing = 4.0
 			isFillHeight = true
@@ -816,18 +825,16 @@ class RCrifLayoutTool : Application() {
 						val s = src.getOrNull(j)
 						val t = tgt.getOrNull(j)
 						if (s != null && t != null) {
-							val origLine = s
-							val newLine = t
-							val prefix = origLine.commonPrefixWith(newLine).length
-							val maxSuf = min(origLine.length, newLine.length) - prefix
+							val prefix = s.commonPrefixWith(t).length
+							val maxSuf = min(s.length, t.length) - prefix
 							var suf = 0
 							while (suf < maxSuf &&
-								origLine[origLine.length - 1 - suf] ==
-								newLine[newLine.length - 1 - suf]
+								s[s.length - 1 - suf] ==
+								t[t.length - 1 - suf]
 							) suf++
 
 							if (prefix > 0) addPlain(prefix)
-							val diffLen = origLine.length - prefix - suf
+							val diffLen = s.length - prefix - suf
 							if (diffLen > 0) addChange(diffLen)
 							addPlain(suf + if (lineIdx + j < lastLineIndex) 1 else 0)
 						} else if (s != null) {
@@ -942,20 +949,18 @@ class RCrifLayoutTool : Application() {
 						val sR = d.target.lines.getOrNull(j)
 
 						if (sL != null && sR != null) {
-							val orig = sL
-							val neu = sR
-							val pref = orig.commonPrefixWith(neu).length
-							val maxS = min(orig.length, neu.length) - pref
+							val pref = sL.commonPrefixWith(sR).length
+							val maxS = min(sL.length, sR.length) - pref
 							var suf = 0
-							while (suf < maxS && orig[orig.length - 1 - suf] == neu[neu.length - 1 - suf]) suf++
+							while (suf < maxS && sL[sL.length - 1 - suf] == sR[sR.length - 1 - suf]) suf++
 
 							if (pref > 0) addPlainL(pref)
-							val diffL = orig.length - pref - suf
+							val diffL = sL.length - pref - suf
 							if (diffL > 0) addDelL(diffL)
 							addPlainL(suf + if (li + j < left.lastIndex) 1 else 0)
 
 							if (pref > 0) addPlainR(pref)
-							val diffR = neu.length - pref - suf
+							val diffR = sR.length - pref - suf
 							if (diffR > 0) addInsR(diffR)
 							addPlainR(suf + if (ri + j < right.lastIndex) 1 else 0)
 						} else if (sL != null) {
@@ -1056,43 +1061,6 @@ class RCrifLayoutTool : Application() {
 		}
 		return StackPane(scroll, filler)
 	}
-
-
-//	private fun alignForDisplay(leftText: String, rightText: String): Pair<String, String> {
-//		val left = leftText.lines().toMutableList()
-//		val right = rightText.lines().toMutableList()
-//		fun clean(xs: List<String>) = xs.map { it.replace(Regex("""\bUID="[^"]*""""), """UID=""") }
-//		val deltas = DiffUtils.diff(clean(left), clean(right)).deltas.sortedBy { it.source.position }
-//		var lOff = 0
-//		var rOff = 0
-//		for (d in deltas) {
-//			val lp = d.source.position + lOff
-//			val rp = d.target.position + rOff
-//			when (d.type) {
-//				DeltaType.DELETE -> {
-//					repeat(d.source.lines.size) { i -> right.add(rp + i, ""); rOff++ }
-//				}
-//
-//				DeltaType.INSERT -> {
-//					repeat(d.target.lines.size) { i -> left.add(lp + i, ""); lOff++ }
-//				}
-//
-//				DeltaType.CHANGE -> {
-//					val dl = d.source.lines.size
-//					val dr = d.target.lines.size
-//					when {
-//						dl < dr -> repeat(dr - dl) { i -> left.add(lp + dl + i, ""); lOff++ }
-//						dl > dr -> repeat(dl - dr) { i -> right.add(rp + dr + i, ""); rOff++ }
-//					}
-//				}
-//
-//				else -> {
-//					/* EQUAL не трогаем */
-//				}
-//			}
-//		}
-//		return left.joinToString("\n") to right.joinToString("\n")
-//	}
 
 
 	private val diffExecutor = Executors.newSingleThreadExecutor { r ->
@@ -1265,6 +1233,87 @@ class RCrifLayoutTool : Application() {
 		val empty = diffNav.isEmpty()
 		prevBtn.isDisable = empty || diffIdx <= 0
 		nextBtn.isDisable = empty || diffIdx >= diffNav.lastIndex
+	}
+
+
+	private fun showSearchWindow(margeArea1: CodeArea, margeArea2: CodeArea) {
+		val dialog = Stage().apply {
+			initModality(Modality.APPLICATION_MODAL)
+			title = "Поиск"
+		}
+
+		val searchField = TextField().apply { promptText = "Введите текст поиска" }
+		val prevBtn = Button("◀️").apply { isDisable = true }
+		val nextBtn = Button("▶️").apply { isDisable = true }
+
+		var occurrences = mutableListOf<IntRange>()
+		var currentIndex = -1
+
+		fun updateButtons() {
+			prevBtn.isDisable = occurrences.isEmpty() || currentIndex <= 0
+			nextBtn.isDisable = occurrences.isEmpty() || currentIndex >= occurrences.lastIndex
+		}
+
+		fun highlightAll(area: CodeArea, query: String) {
+			val text = area.text
+			val pattern = Pattern.compile(Pattern.quote(query), Pattern.CASE_INSENSITIVE)
+			val matcher = pattern.matcher(text)
+			val spansBuilder = StyleSpansBuilder<Collection<String>>()
+			var lastEnd = 0
+			occurrences.clear()
+			while (matcher.find()) {
+				spansBuilder.add(Collections.emptyList(), matcher.start() - lastEnd)
+				spansBuilder.add(Collections.singleton("search-highlight"), matcher.end() - matcher.start())
+				occurrences.add(matcher.start() until matcher.end())
+				lastEnd = matcher.end()
+			}
+			spansBuilder.add(Collections.emptyList(), text.length - lastEnd)
+			area.setStyleSpans(0, spansBuilder.create())
+		}
+
+		fun selectOccurrence(area: CodeArea, idx: Int) {
+			val range = occurrences[idx]
+			val pos = area.offsetToPosition(range.start, Bias.Forward).major
+			area.showParagraphAtCenter(pos)
+			area.selectRange(range.start, range.endInclusive + 1)
+		}
+
+		val searchBtn = Button("Найти").apply {
+			setOnAction {
+				val query = searchField.text
+				if (query.isNullOrBlank()) return@setOnAction
+				val active = if (margeArea1.isFocused) margeArea1 else margeArea2
+				highlightAll(active, query)
+				currentIndex = if (occurrences.isEmpty()) -1 else 0
+				updateButtons()
+				if (currentIndex >= 0) selectOccurrence(active, currentIndex)
+			}
+		}
+
+		prevBtn.setOnAction {
+			if (currentIndex > 0) {
+				currentIndex--
+				val active = if (margeArea1.isFocused) margeArea1 else margeArea2
+				selectOccurrence(active, currentIndex)
+				updateButtons()
+			}
+		}
+
+		nextBtn.setOnAction {
+			if (currentIndex < occurrences.lastIndex) {
+				currentIndex++
+				val active = if (margeArea1.isFocused) margeArea1 else margeArea2
+				selectOccurrence(active, currentIndex)
+				updateButtons()
+			}
+		}
+
+		val controls = HBox(4.0, searchField, searchBtn, prevBtn, nextBtn).apply {
+			padding = Insets(10.0)
+		}
+
+		dialog.scene = Scene(VBox(controls), 400.0, 80.0)
+		dialog.showAndWait()
 	}
 
 
