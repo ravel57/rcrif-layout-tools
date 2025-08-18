@@ -49,6 +49,8 @@ dependencies {
 	implementation 'org.fxmisc.richtext:richtextfx:0.11.5'
 	implementation 'io.github.java-diff-utils:java-diff-utils:4.16'
 
+	implementation 'org.eclipse.jgit:org.eclipse.jgit:7.3.0.202506031305-r'
+
 	testImplementation "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
 	testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitVersion}"
 }

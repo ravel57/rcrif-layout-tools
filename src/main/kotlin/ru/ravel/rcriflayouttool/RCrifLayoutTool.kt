@@ -46,6 +46,10 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import javafx.util.Duration as FxDuration
+import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.treewalk.TreeWalk
+import org.eclipse.jgit.treewalk.filter.PathFilter
 
 
 class RCrifLayoutTool : Application() {
@@ -132,8 +136,7 @@ class RCrifLayoutTool : Application() {
 						hide()
 						val activities = getProceduresActivities(newVal)
 						layoutActivitiesCache = activities
-						procedureTableView.items.clear()
-						procedureTableView.items.addAll(activities.map { ParamRow(SimpleStringProperty(it.reference)) })
+						procedureTableView.items.setAll(activities.map { ParamRow(SimpleStringProperty(it.reference)) })
 					}
 				}
 			}
@@ -148,10 +151,10 @@ class RCrifLayoutTool : Application() {
 				allConnectors.setAll(getAllConnectors(lastPath).map { it.connectorName }.distinct())
 				allMarge.setAll(
 					File(selectedDirectory, "Procedures").list()
-					?.sorted()
-					?.toMutableList()
-					?.apply { add(0, "MainFlow") }
-					?: emptyList())
+						?.sorted()
+						?.toMutableList()
+						?.apply { add(0, "MainFlow") }
+						?: emptyList())
 			}
 		}
 		val chooseFolderButton = Button("Выбрать папку").apply {
@@ -171,10 +174,10 @@ class RCrifLayoutTool : Application() {
 					allConnectors.setAll(getAllConnectors(selectedDirectory!!.absolutePath).map { it.connectorName }.distinct())
 					allMarge.setAll(
 						File(selectedDirectory, "Procedures").list()
-						?.sorted()
-						?.toMutableList()
-						?.apply { add(0, "MainFlow") }
-						?: emptyList())
+							?.sorted()
+							?.toMutableList()
+							?.apply { add(0, "MainFlow") }
+							?: emptyList())
 					procedureComboBox.selectionModel.clearSelection()
 					procedureComboBox.value = null
 					procedureComboBox.editor.clear()
@@ -234,8 +237,7 @@ class RCrifLayoutTool : Application() {
 						filteredConnectors.setPredicate { true }
 						editor.text = newVal
 						hide()
-						connectorTableView.items.clear()
-						connectorTableView.items.addAll(getConnectorReferences(folderField.text, newVal).map {
+						connectorTableView.items.setAll(getConnectorReferences(folderField.text, newVal).map {
 							ParamRow(SimpleStringProperty(it))
 						})
 					}
@@ -251,6 +253,9 @@ class RCrifLayoutTool : Application() {
 		}
 
 		/* Marge */
+		val margeArea1 = CodeArea()
+		val margeArea2 = CodeArea()
+
 		val mergeComboBox = ComboBox(filteredMarge).apply {
 			isEditable = true
 			promptText = "Layout процедуры"
@@ -279,13 +284,21 @@ class RCrifLayoutTool : Application() {
 						filteredMarge.setPredicate { true }
 						editor.text = newVal
 						hide()
+						val file = if (newVal == "MainFlow") {
+							File(selectedDirectory, "${newVal}/Layout.xml")
+						} else {
+							File(selectedDirectory, "Procedures/${newVal}/Layout.xml")
+						}
+						val text = file.let { f ->
+							f.takeIf { it.exists() }?.readText(charset = Charsets.UTF_16LE) ?: ""
+						}
+						margeArea2.replaceText(text)
+						val previousFileVersion = getPreviousFileVersion(selectedDirectory!!, file.absolutePath)
+						margeArea1.replaceText(previousFileVersion)
 					}
 				}
 			}
 		}
-
-		val margeArea1 = CodeArea()
-		val margeArea2 = CodeArea()
 		val prevBtn = Button("◀").apply {
 			isDisable = true
 		}
@@ -432,12 +445,12 @@ class RCrifLayoutTool : Application() {
 		}
 
 		/* Поиск затираний */
-		val firstColumn = TableColumn<DualParamRow, String>("Первое поле").apply {
+		val firstColumn = TableColumn<DualParamRow, String>("Активность").apply {
 			cellValueFactory = Callback { cellData ->
 				cellData.value.firstField
 			}
 		}
-		val secondColumn = TableColumn<DualParamRow, String>("Второе поле").apply {
+		val secondColumn = TableColumn<DualParamRow, String>("DataDock").apply {
 			cellValueFactory = Callback { cellData ->
 				cellData.value.secondField
 			}
@@ -477,8 +490,8 @@ class RCrifLayoutTool : Application() {
 			Tab("Поиск использования процедур", proceduresTabContent).apply { isClosable = false },
 			Tab("Поиск использования коннекторов", connectorsTabContent).apply { isClosable = false },
 			Tab("Поиск атрибутов", attributeBox).apply { isClosable = false },
-			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
 			Tab("Layout marge", margeBp).apply { isClosable = false },
+			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
 			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
 		)
@@ -493,7 +506,7 @@ class RCrifLayoutTool : Application() {
 			padding = Insets(20.0)
 		}
 
-		stage.scene = Scene(root, 600.0, 500.0).apply {
+		stage.scene = Scene(root, 700.0, 500.0).apply {
 			javaClass.classLoader.getResource("diff.css")?.let {
 				stylesheets.add(it.toExternalForm())
 			}
@@ -1314,6 +1327,48 @@ class RCrifLayoutTool : Application() {
 
 		dialog.scene = Scene(VBox(controls), 400.0, 80.0)
 		dialog.showAndWait()
+	}
+
+	fun getPreviousFileVersion(repoDir: File, fileAbsPath: String): String {
+		val repo = FileRepositoryBuilder().findGitDir(repoDir).build()
+		repo.use { r ->
+			val workTree = r.workTree
+			val rel = workTree.toPath().relativize(File(fileAbsPath).toPath()).toString().replace("\\", "/")
+			val prevCommit = Git(r).log()
+				.addPath(rel)
+				.setMaxCount(2)
+				.call()
+				.toList()
+				.getOrNull(0)
+				?: return ""
+			return readFileAtCommit(r.workTree, prevCommit.name, rel)
+		}
+	}
+
+	private fun readFileAtCommit(repoWorkTree: File, commitId: String, relPath: String): String {
+		val repo = FileRepositoryBuilder().findGitDir(repoWorkTree).build()
+		repo.use { r ->
+			val rev = r.resolve(commitId) ?: return ""
+			val commit = org.eclipse.jgit.revwalk.RevWalk(r).use { it.parseCommit(rev) }
+			val tree = commit.tree
+
+			TreeWalk(r).use { tw ->
+				tw.addTree(tree)
+				tw.isRecursive = true
+				tw.filter = PathFilter.create(relPath)
+				while (tw.next()) {
+					if (tw.pathString == relPath) {
+						val bytes = r.open(tw.getObjectId(0)).bytes
+						return when {
+							bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() -> String(bytes, Charsets.UTF_16LE)
+							bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() -> String(bytes, Charsets.UTF_16BE)
+							else -> String(bytes, Charsets.UTF_8)
+						}
+					}
+				}
+			}
+			return ""
+		}
 	}
 
 
