@@ -1,5 +1,6 @@
 package ru.ravel.rcriflayouttool.util
 
+import java.io.File
 import java.nio.charset.Charset
 
 object XmlReader {
@@ -22,6 +23,11 @@ object XmlReader {
 				String(bytes, Charset.forName(encoding))
 			}
 		}
+	}
+
+
+	fun readXmlSafe(file: File): String {
+		return readXmlSafe(file.readBytes())
 	}
 
 }

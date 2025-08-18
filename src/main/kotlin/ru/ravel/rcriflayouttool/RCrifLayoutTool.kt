@@ -1,5 +1,6 @@
 package ru.ravel.rcriflayouttool
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.dataformat.xml.XmlMapper
 import com.github.difflib.DiffUtils
 import com.github.difflib.patch.DeltaType
@@ -1257,7 +1258,7 @@ class RCrifLayoutTool : Application() {
 		val prevBtn = Button("◀️").apply { isDisable = true }
 		val nextBtn = Button("▶️").apply { isDisable = true }
 
-		var occurrences = mutableListOf<IntRange>()
+		val occurrences = mutableListOf<IntRange>()
 		var currentIndex = -1
 
 		fun updateButtons() {
@@ -1329,7 +1330,6 @@ class RCrifLayoutTool : Application() {
 
 
 	private fun searchUnusedFo(): List<String> {
-		val mapper = XmlMapper()
 		val objectIDRegex = Regex(
 			"""<form:include[^>]*objectID="([^"]+)"[^>]*/>""",
 			RegexOption.IGNORE_CASE
@@ -1346,7 +1346,7 @@ class RCrifLayoutTool : Application() {
 		val allUsedFo = (foInMainFlow + foInProcedures)
 			.filter { it.isFile && it.name == "XForm.xml" }
 			.flatMap { xmlFile ->
-				val text = readXmlSafe(xmlFile)
+				val text = XmlReader.readXmlSafe(xmlFile)
 				val matches = objectIDRegex.findAll(text).map { it.groupValues[1] }.toList()
 				matches
 			}
