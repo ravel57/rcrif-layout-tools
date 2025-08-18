@@ -1,6 +1,5 @@
 package ru.ravel.rcriflayouttool
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.dataformat.xml.XmlMapper
 import com.github.difflib.DiffUtils
 import com.github.difflib.patch.DeltaType
@@ -32,10 +31,13 @@ import org.fxmisc.richtext.model.StyleSpansBuilder
 import org.fxmisc.richtext.model.TwoDimensional.Bias
 import org.reactfx.Subscription
 import ru.ravel.rcriflayouttool.dto.*
-import ru.ravel.rcriflayouttool.model.connectorproperties.DataSourceActivityDefinition
+import ru.ravel.rcriflayouttool.model.segmentationtree.BusinessRule
+import ru.ravel.rcriflayouttool.model.connectorproperties.DataSource
+import ru.ravel.rcriflayouttool.model.form.Form
 import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
 import ru.ravel.rcriflayouttool.model.mappingproperties.MappingActivityDefinition
 import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
+import ru.ravel.rcriflayouttool.model.segmentationtree.SegmentationTree
 import ru.ravel.rcriflayouttool.util.GitUnit
 import ru.ravel.rcriflayouttool.util.XmlReader
 import java.io.File
@@ -499,6 +501,29 @@ class RCrifLayoutTool : Application() {
 			padding = Insets(20.0)
 		}
 
+		/* Поиск неиспользуемых BR (ST + FM) */
+		val unusedBrColumn = TableColumn<ParamRow, String>("Название BusinessRule (ST + FM)").apply {
+			cellValueFactory = Callback { it.value.field }
+			isEditable = true
+		}
+		val unusedBrTableView = TableView<ParamRow>().apply {
+			columns.setAll(unusedBrColumn)
+			isEditable = true
+		}
+		unusedBrColumn.prefWidthProperty().bind(unusedProcedureTableView.widthProperty().subtract(2))
+		val unusedBrButton = Button("Поиск").apply {
+			setOnAction {
+				unusedBrTableView.items.setAll(searchUnusedBr().mapNotNull { ParamRow(SimpleStringProperty(it)) })
+			}
+		}
+		val unusedBrBox = VBox(
+			10.0,
+			unusedBrButton,
+			unusedBrTableView
+		).apply {
+			padding = Insets(20.0)
+		}
+
 		/* Добавление связей */
 		val emptyTabContent = VBox(
 			10.0,
@@ -514,6 +539,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Поиск атрибутов", attributeBox).apply { isClosable = false },
 			Tab("Layout marge", margeBp).apply { isClosable = false },
 			Tab("Поиск неиспользуемых FO", unusedFoBox).apply { isClosable = false },
+			Tab("Поиск неиспользуемых BR в ST+FM", unusedBrBox).apply { isClosable = false },
 			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
 			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
@@ -622,7 +648,7 @@ class RCrifLayoutTool : Application() {
 	}
 
 
-	private fun getAllConnectors(selectedProcess: String): List<DataSourceActivityDefinition> {
+	private fun getAllConnectors(selectedProcess: String): List<DataSource> {
 		val mapper = XmlMapper()
 
 		val dataSourceActivityDefinitions = File(selectedProcess, "Procedures")
@@ -630,7 +656,7 @@ class RCrifLayoutTool : Application() {
 			.filter { it.isFile && it.name == "Properties.xml" }
 			.toList()
 			.map { file ->
-				file.inputStream().use { input -> mapper.readValue(input, DataSourceActivityDefinition::class.java) }
+				file.inputStream().use { input -> mapper.readValue(input, DataSource::class.java) }
 			}
 			.filter { activity -> activity.connectorName != null }
 
@@ -639,7 +665,7 @@ class RCrifLayoutTool : Application() {
 			.filter { it.isFile && it.name == "Properties.xml" }
 			.toList()
 			.map { file ->
-				file.inputStream().use { input -> mapper.readValue(input, DataSourceActivityDefinition::class.java) }
+				file.inputStream().use { input -> mapper.readValue(input, DataSource::class.java) }
 			}
 			.filter { activity -> activity.connectorName != null }
 
@@ -1133,11 +1159,11 @@ class RCrifLayoutTool : Application() {
 
 	private fun searchErasures(): List<Pair<String, List<String>>> {
 		val mapper = XmlMapper()
-
 		val sameNameTemplateRegex = Regex(
 			"""(?s)<\s*xsl:template\s+name\s*=\s*"([^"]+)"\s*>.*?<\s*xsl:element\s+name\s*="\1"\s*/>.*?</\s*xsl:template\s*>""",
 			RegexOption.IGNORE_CASE
 		)
+
 		val erasuresInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
 		val erasuresInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
 		val result = (erasuresInMainFlow + erasuresInProcedures)
@@ -1355,9 +1381,32 @@ class RCrifLayoutTool : Application() {
 		return (allFo - allUsedFo.toSet()) + (allUsedFo - allFo.toSet())
 	}
 
+	private fun searchUnusedBr(): List<String?> {
+		val mapper = XmlMapper()
 
-	private fun readXmlSafe(file: File): String {
-		return XmlReader.readXmlSafe(file.readBytes())
+		val allBrs = File(selectedDirectory, "BusinessRules")
+			.walkTopDown()
+			.filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
+			.map { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), BusinessRule::class.java).businessRuleID }
+			.toList()
+
+		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+		val segmentationTrees = (activitiesInMainFlow + activitiesInProcedures)
+			.filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
+			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java) }
+			.filter { br -> br.rules != null }
+			.distinct()
+			.toList()
+
+		val forms = (activitiesInMainFlow + activitiesInProcedures)
+			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), Form::class.java) }
+			.filter { f -> f.exitTimeouts?.any { it.exitBusinessRules != null } == true }
+
+		return allBrs
+			.minus(segmentationTrees.flatMap { st -> st.rules?.ruleList?.map { it.ruleID } ?: emptyList() }.toSet())
+			.minus(forms.flatMap { fm -> fm.exitTimeouts?.map { it.exitBusinessRules } ?: emptyList() }.toSet())
 	}
 
 

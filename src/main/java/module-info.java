@@ -17,5 +17,8 @@ module ru.ravel.rcriflayouttool {
 	opens ru.ravel.rcriflayouttool.model.procedureproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	opens ru.ravel.rcriflayouttool.model.connectorproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	opens ru.ravel.rcriflayouttool.model.mappingproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.segmentationtree to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.form to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	exports ru.ravel.rcriflayouttool.util;
 	exports ru.ravel.rcriflayouttool;
 }
