@@ -9,6 +9,7 @@ module ru.ravel.rcriflayouttool {
 	requires reactfx;
 	requires io.github.javadiffutils;
 	requires com.fasterxml.jackson.databind;
+	requires org.eclipse.jgit;
 
 
 	opens ru.ravel.rcriflayouttool to javafx.graphics, com.fasterxml.jackson.databind;

@@ -35,6 +35,8 @@ import ru.ravel.rcriflayouttool.model.connectorproperties.DataSourceActivityDefi
 import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
 import ru.ravel.rcriflayouttool.model.mappingproperties.MappingActivityDefinition
 import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
+import ru.ravel.rcriflayouttool.util.GitUnit
+import ru.ravel.rcriflayouttool.util.XmlReader
 import java.io.File
 import java.time.Duration
 import java.util.*
@@ -46,10 +48,6 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import javafx.util.Duration as FxDuration
-import org.eclipse.jgit.api.Git
-import org.eclipse.jgit.storage.file.FileRepositoryBuilder
-import org.eclipse.jgit.treewalk.TreeWalk
-import org.eclipse.jgit.treewalk.filter.PathFilter
 
 
 class RCrifLayoutTool : Application() {
@@ -293,7 +291,7 @@ class RCrifLayoutTool : Application() {
 							f.takeIf { it.exists() }?.readText(charset = Charsets.UTF_16LE) ?: ""
 						}
 						margeArea2.replaceText(text)
-						val previousFileVersion = getPreviousFileVersion(selectedDirectory!!, file.absolutePath)
+						val previousFileVersion = GitUnit.getPreviousFileVersion(selectedDirectory!!, file.absolutePath)
 						margeArea1.replaceText(previousFileVersion)
 					}
 				}
@@ -477,6 +475,29 @@ class RCrifLayoutTool : Application() {
 			padding = Insets(20.0)
 		}
 
+		/* Поиск неиспользуемых FO */
+		val unusedFoColumn = TableColumn<ParamRow, String>("Название FO").apply {
+			cellValueFactory = Callback { it.value.field }
+			isEditable = true
+		}
+		val unusedFoTableView = TableView<ParamRow>().apply {
+			columns.setAll(unusedFoColumn)
+			isEditable = true
+		}
+		unusedFoColumn.prefWidthProperty().bind(unusedProcedureTableView.widthProperty().subtract(2))
+		val unusedFoButton = Button("Поиск").apply {
+			setOnAction {
+				unusedFoTableView.items.setAll(searchUnusedFo().map { ParamRow(SimpleStringProperty(it)) })
+			}
+		}
+		val unusedFoBox = VBox(
+			10.0,
+			unusedFoButton,
+			unusedFoTableView
+		).apply {
+			padding = Insets(20.0)
+		}
+
 		/* Добавление связей */
 		val emptyTabContent = VBox(
 			10.0,
@@ -491,6 +512,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Поиск использования коннекторов", connectorsTabContent).apply { isClosable = false },
 			Tab("Поиск атрибутов", attributeBox).apply { isClosable = false },
 			Tab("Layout marge", margeBp).apply { isClosable = false },
+			Tab("Поиск неиспользуемых FO", unusedFoBox).apply { isClosable = false },
 			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
 			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
@@ -919,10 +941,12 @@ class RCrifLayoutTool : Application() {
 
 		for (d in deltas) {
 			while (li < d.source.position) {
-				addPlainL(lenL(li)); li++
+				addPlainL(lenL(li))
+				li++
 			}
 			while (ri < d.target.position) {
-				addPlainR(lenR(ri)); ri++
+				addPlainR(lenR(ri))
+				ri++
 			}
 			val lCount = d.source.lines.size
 			val rCount = d.target.lines.size
@@ -1007,10 +1031,12 @@ class RCrifLayoutTool : Application() {
 
 		// добить «хвост» равных зон
 		while (li < left.size) {
-			addPlainL(lenL(li)); li++
+			addPlainL(lenL(li))
+			li++
 		}
 		while (ri < right.size) {
-			addPlainR(lenR(ri)); ri++
+			addPlainR(lenR(ri))
+			ri++
 		}
 
 		return DiffResult(spansL.create(), spansR.create(), nav.toList(), deleted, inserted)
@@ -1111,9 +1137,9 @@ class RCrifLayoutTool : Application() {
 			"""(?s)<\s*xsl:template\s+name\s*=\s*"([^"]+)"\s*>.*?<\s*xsl:element\s+name\s*="\1"\s*/>.*?</\s*xsl:template\s*>""",
 			RegexOption.IGNORE_CASE
 		)
-
-		val erasuresInProcedures = File(selectedDirectory, "Procedures")
-			.walkTopDown()
+		val erasuresInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+		val erasuresInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val result = (erasuresInMainFlow + erasuresInProcedures)
 			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
 			.filter { file -> sameNameTemplateRegex.containsMatchIn(file.readText()) }
 			.mapNotNull { xsltFile ->
@@ -1122,7 +1148,9 @@ class RCrifLayoutTool : Application() {
 					.map { it.groupValues[1] }
 					.toSet()
 				val propsFile = xsltFile.parentFile.resolve("Properties.xml")
-				if (!propsFile.exists()) return@mapNotNull null
+				if (!propsFile.exists()) {
+					return@mapNotNull null
+				}
 				val def = propsFile.inputStream().use { mapper.readValue(it, MappingActivityDefinition::class.java) }
 				val names = def.referredDocuments.items
 					.filter { it.access.equals("InOut", true) && it.referenceName in erasedNames }
@@ -1131,41 +1159,10 @@ class RCrifLayoutTool : Application() {
 			}
 			.toList()
 
-		val erasuresInMainFlow = File(selectedDirectory, "MainFlow")
-			.walkTopDown()
-			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
-			.filter { file -> sameNameTemplateRegex.containsMatchIn(file.readText()) }
-			.mapNotNull { xsltFile ->
-				val text = xsltFile.readText()
-				val erasedNames = sameNameTemplateRegex.findAll(text)
-					.map { it.groupValues[1] }
-					.toSet()
-				val propsFile = xsltFile.parentFile.resolve("Properties.xml")
-				if (!propsFile.exists()) return@mapNotNull null
-				val def = propsFile.inputStream().use { mapper.readValue(it, MappingActivityDefinition::class.java) }
-				val names = def.referredDocuments.items
-					.filter { it.access.equals("InOut", true) && it.referenceName in erasedNames }
-					.map { it.referenceName }
-				xsltFile.parentFile.name to names
-			}
-			.toList()
-
-		return (erasuresInMainFlow + erasuresInProcedures)
+		return result
 	}
 
 
-	/**
-	 * Выравнивает документы по высоте, вставляя "" (виртуальные строки)
-	 * там, где в одном документе есть строка, а в другом – нет.
-	 *
-	 * @return Pair( leftAligned, rightAligned )
-	 *
-	 * Пример использования:
-	 *     val (alignedL, alignedR) = padLinesForDiff(linesL, linesR)
-	 *     areaLeft.replaceText(alignedL.joinToString("\n"))
-	 *     areaRight.replaceText(alignedR.joinToString("\n"))
-	 *     val diff = buildSpansAndNav(alignedL, alignedR)
-	 */
 	private fun padLinesForDiff(
 		left: List<String>,
 		right: List<String>
@@ -1193,7 +1190,8 @@ class RCrifLayoutTool : Application() {
 			while (li < toLi && ri < toRi) {
 				outL += left[li]
 				outR += right[ri]
-				li++; ri++
+				li++
+				ri++
 			}
 		}
 
@@ -1329,46 +1327,37 @@ class RCrifLayoutTool : Application() {
 		dialog.showAndWait()
 	}
 
-	fun getPreviousFileVersion(repoDir: File, fileAbsPath: String): String {
-		val repo = FileRepositoryBuilder().findGitDir(repoDir).build()
-		repo.use { r ->
-			val workTree = r.workTree
-			val rel = workTree.toPath().relativize(File(fileAbsPath).toPath()).toString().replace("\\", "/")
-			val prevCommit = Git(r).log()
-				.addPath(rel)
-				.setMaxCount(2)
-				.call()
-				.toList()
-				.getOrNull(0)
-				?: return ""
-			return readFileAtCommit(r.workTree, prevCommit.name, rel)
-		}
+
+	private fun searchUnusedFo(): List<String> {
+		val mapper = XmlMapper()
+		val objectIDRegex = Regex(
+			"""<form:include[^>]*objectID="([^"]+)"[^>]*/>""",
+			RegexOption.IGNORE_CASE
+		)
+
+		val allFo = File(selectedDirectory, "FormObjects")
+			.walkTopDown()
+			.toList()
+			.filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
+			.map { xmlFile -> xmlFile.nameWithoutExtension }
+
+		val foInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val foInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+		val allUsedFo = (foInMainFlow + foInProcedures)
+			.filter { it.isFile && it.name == "XForm.xml" }
+			.flatMap { xmlFile ->
+				val text = readXmlSafe(xmlFile)
+				val matches = objectIDRegex.findAll(text).map { it.groupValues[1] }.toList()
+				matches
+			}
+			.distinct()
+
+		return (allFo - allUsedFo.toSet()) + (allUsedFo - allFo.toSet())
 	}
 
-	private fun readFileAtCommit(repoWorkTree: File, commitId: String, relPath: String): String {
-		val repo = FileRepositoryBuilder().findGitDir(repoWorkTree).build()
-		repo.use { r ->
-			val rev = r.resolve(commitId) ?: return ""
-			val commit = org.eclipse.jgit.revwalk.RevWalk(r).use { it.parseCommit(rev) }
-			val tree = commit.tree
 
-			TreeWalk(r).use { tw ->
-				tw.addTree(tree)
-				tw.isRecursive = true
-				tw.filter = PathFilter.create(relPath)
-				while (tw.next()) {
-					if (tw.pathString == relPath) {
-						val bytes = r.open(tw.getObjectId(0)).bytes
-						return when {
-							bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() -> String(bytes, Charsets.UTF_16LE)
-							bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() -> String(bytes, Charsets.UTF_16BE)
-							else -> String(bytes, Charsets.UTF_8)
-						}
-					}
-				}
-			}
-			return ""
-		}
+	private fun readXmlSafe(file: File): String {
+		return XmlReader.readXmlSafe(file.readBytes())
 	}
 
 
