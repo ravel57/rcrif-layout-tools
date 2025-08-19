@@ -37,6 +37,7 @@ import ru.ravel.rcriflayouttool.model.connectorproperties.DataSource
 import ru.ravel.rcriflayouttool.model.dispatch.Dispatch
 import ru.ravel.rcriflayouttool.model.form.Form
 import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
+import ru.ravel.rcriflayouttool.dto.EmptyActivity
 import ru.ravel.rcriflayouttool.model.mappingproperties.MappingActivityDefinition
 import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
 import ru.ravel.rcriflayouttool.model.segmentationtree.BusinessRule
@@ -195,9 +196,7 @@ class RCrifLayoutTool : Application() {
 		}
 
 		val proceduresTabContent = VBox(
-			10.0,
-			HBox(Label("Название процедуры:"), procedureComboBox).apply { padding = Insets(5.0) },
-			procedureTableView
+			10.0, HBox(Label("Название процедуры:"), procedureComboBox).apply { padding = Insets(5.0) }, procedureTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -249,9 +248,7 @@ class RCrifLayoutTool : Application() {
 			}
 		}
 		val connectorsTabContent = VBox(
-			10.0,
-			HBox(Label("Название коннектора:"), connectorsComboBox).apply { padding = Insets(5.0) },
-			connectorTableView
+			10.0, HBox(Label("Название коннектора:"), connectorsComboBox).apply { padding = Insets(5.0) }, connectorTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -417,9 +414,7 @@ class RCrifLayoutTool : Application() {
 			}
 		}
 		val unusedProcedureTabContent = VBox(
-			10.0,
-			HBox(5.0, unusedProceduresButton, unusedProceduresProgress),
-			unusedProcedureTableView
+			10.0, HBox(5.0, unusedProceduresButton, unusedProceduresProgress), unusedProcedureTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -450,18 +445,18 @@ class RCrifLayoutTool : Application() {
 		}
 
 		/* Поиск затираний */
-		val firstColumn = TableColumn<DualParamRow, String>("Активность").apply {
+		val erasuresFirstColumn = TableColumn<DualParamRow, String>("Активность").apply {
 			cellValueFactory = Callback { cellData ->
 				cellData.value.firstField
 			}
 		}
-		val secondColumn = TableColumn<DualParamRow, String>("DataDock").apply {
+		val erasuresSecondColumn = TableColumn<DualParamRow, String>("DataDock").apply {
 			cellValueFactory = Callback { cellData ->
 				cellData.value.secondField
 			}
 		}
 		val erasuresTableView = TableView<DualParamRow>().apply {
-			columns.setAll(firstColumn, secondColumn)
+			columns.setAll(erasuresFirstColumn, erasuresSecondColumn)
 			isEditable = true
 		}
 		val erasuresButton = Button("Поиск").apply {
@@ -475,9 +470,7 @@ class RCrifLayoutTool : Application() {
 			}
 		}
 		val erasuresBox = VBox(
-			10.0,
-			erasuresButton,
-			erasuresTableView
+			10.0, erasuresButton, erasuresTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -498,15 +491,13 @@ class RCrifLayoutTool : Application() {
 			}
 		}
 		val unusedFoBox = VBox(
-			10.0,
-			unusedFoButton,
-			unusedFoTableView
+			10.0, unusedFoButton, unusedFoTableView
 		).apply {
 			padding = Insets(20.0)
 		}
 
-		/* Поиск неиспользуемых BR (ST + FM) */
-		val unusedBrColumn = TableColumn<ParamRow, String>("Название BusinessRule (ST + FM)").apply {
+		/* Поиск неиспользуемых BR (ST + FM + DR) */
+		val unusedBrColumn = TableColumn<ParamRow, String>("Название BusinessRule (ST + FM + DR)").apply {
 			cellValueFactory = Callback { it.value.field }
 			isEditable = true
 		}
@@ -521,17 +512,52 @@ class RCrifLayoutTool : Application() {
 			}
 		}
 		val unusedBrBox = VBox(
-			10.0,
-			unusedBrButton,
-			unusedBrTableView
+			10.0, unusedBrButton, unusedBrTableView
+		).apply {
+			padding = Insets(20.0)
+		}
+
+		/* Поиск неиспользуемых активностей */
+		val unusedActivitiesFirstColumn = TableColumn<TripleParamRow, String>("Активность").apply {
+			cellValueFactory = Callback { cellData ->
+				cellData.value.firstField
+			}
+		}
+		val unusedActivitiesSecondColumn = TableColumn<TripleParamRow, String>("Количество входов").apply {
+			cellValueFactory = Callback { cellData ->
+				cellData.value.secondField
+			}
+		}
+		val unusedActivitiesThirdColumn = TableColumn<TripleParamRow, String>("Количество выходов").apply {
+			cellValueFactory = Callback { cellData ->
+				cellData.value.thirdField
+			}
+		}
+		val unusedActivitiesTableView = TableView<TripleParamRow>().apply {
+			columns.setAll(unusedActivitiesFirstColumn, unusedActivitiesSecondColumn, unusedActivitiesThirdColumn)
+			isEditable = true
+		}
+		val unusedActivitiesButton = Button("Поиск").apply {
+			setOnAction {
+				val flatMap = searchUnusedActivities().map {
+					TripleParamRow(
+						SimpleStringProperty(it.reference),
+						SimpleStringProperty(it.inCount.toString()),
+						SimpleStringProperty(it.outCount.toString())
+					)
+				}
+				unusedActivitiesTableView.items.setAll(flatMap)
+			}
+		}
+		val unusedActivitiesBox = VBox(
+			10.0, unusedActivitiesButton, unusedActivitiesTableView
 		).apply {
 			padding = Insets(20.0)
 		}
 
 		/* Добавление связей */
 		val emptyTabContent = VBox(
-			10.0,
-			Label("Пусто")
+			10.0, Label("Пусто")
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -547,16 +573,14 @@ class RCrifLayoutTool : Application() {
 			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
 			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
 //			Tab("Пустые выходы ST", ).apply { isClosable = false },
-//			Tab("Неиспользуемые активности", ).apply { isClosable = false },
+			Tab("Неиспользуемые активности", unusedActivitiesBox).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
 		)
 
 		VBox.setVgrow(tabPane, Priority.ALWAYS)
 
 		val root = VBox(
-			10.0,
-			folderChooserPanel,
-			tabPane
+			10.0, folderChooserPanel, tabPane
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -723,9 +747,12 @@ class RCrifLayoutTool : Application() {
 			}
 			src.setOnMousePressed { if (!suspendSync.get()) master.set(src) }
 			src.estimatedScrollYProperty().addListener { _, oldY, newY ->
-				if (suspendSync.get()) return@addListener
-				if (master.get() == null && abs(newY.toDouble() - oldY.toDouble()) > 0.5)
+				if (suspendSync.get()) {
+					return@addListener
+				}
+				if (master.get() == null && abs(newY.toDouble() - oldY.toDouble()) > 0.5) {
 					master.set(src)
+				}
 				if (master.get() === src) {
 					applyRatio(src, dst)
 					idle.playFromStart()
@@ -896,10 +923,9 @@ class RCrifLayoutTool : Application() {
 							val prefix = s.commonPrefixWith(t).length
 							val maxSuf = min(s.length, t.length) - prefix
 							var suf = 0
-							while (suf < maxSuf &&
-								s[s.length - 1 - suf] ==
-								t[t.length - 1 - suf]
-							) suf++
+							while (suf < maxSuf && s[s.length - 1 - suf] == t[t.length - 1 - suf]) {
+								suf++
+							}
 
 							if (prefix > 0) addPlain(prefix)
 							val diffLen = s.length - prefix - suf
@@ -1055,10 +1081,7 @@ class RCrifLayoutTool : Application() {
 			val rEndChar = rEndIdx?.let { endChar(startsR, right, it) }
 
 			if (lStartChar != null || rStartChar != null) {
-				nav += DiffNav(
-					lStart = lStartChar, lEnd = lEndChar,
-					rStart = rStartChar, rEnd = rEndChar
-				)
+				nav += DiffNav(lStart = lStartChar, lEnd = lEndChar, rStart = rStartChar, rEnd = rEndChar)
 			}
 		}
 
@@ -1441,6 +1464,57 @@ class RCrifLayoutTool : Application() {
 			.minus(segmentationTrees.flatMap { st -> st.rules?.ruleList?.map { it.ruleID } ?: emptyList() }.toSet())
 			.minus(forms.flatMap { fm -> fm.exitTimeouts?.map { it.exitBusinessRules } ?: emptyList() }.toSet())
 			.minus(dispatches.map { dr -> dr.dispatchRuleIDs?.dispatchTest?.businessRuleID }.toSet())
+	}
+
+
+	private fun searchUnusedActivities(): List<EmptyActivity> {
+		val mapper = XmlMapper()
+
+		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+
+		val result = (activitiesInMainFlow + activitiesInProcedures)
+			.filter {
+				it.isFile && it.name.equals("Layout.xml", ignoreCase = true)
+			}
+			.flatMap { file ->
+				val layout = mapper.readValue(file, DiagramLayout::class.java)
+				val connectionStats =
+					mutableMapOf<String, MutableMap<String, Int>>().withDefault { mutableMapOf("in" to 0, "out" to 0) }
+
+				layout.connections?.diagramConnections?.forEach { connection ->
+					val endpoints = connection.endPoints?.points
+					if ((endpoints?.size ?: 0) >= 2) {
+						val from = endpoints?.get(0)?.elementRef
+						val to = endpoints?.get(1)?.elementRef
+						if (from != null) {
+							connectionStats.getOrPut(from) { mutableMapOf("in" to 0, "out" to 0) }["out"] =
+								connectionStats.getValue(from)["out"]!! + 1
+						}
+						if (to != null) {
+							connectionStats.getOrPut(to) { mutableMapOf("in" to 0, "out" to 0) }["in"] =
+								connectionStats.getValue(to)["in"]!! + 1
+						}
+					}
+				}
+
+				layout.elements?.diagramElements?.mapNotNull { el ->
+					val stats = connectionStats[el.uid] ?: mapOf("in" to 0, "out" to 0)
+					val inCount = stats["in"] ?: 0
+					val outCount = stats["out"] ?: 0
+					if (
+						(inCount + outCount < 2)
+						&& el.reference?.startsWith("EP_") != true
+						&& (el.reference?.startsWith("PR_") != true && outCount == 0)
+					) {
+						EmptyActivity(el.reference, el.uid, inCount, outCount)
+					} else {
+						null
+					}
+				} ?: emptyList()
+			}
+			.distinct()
+		return result
 	}
 
 
