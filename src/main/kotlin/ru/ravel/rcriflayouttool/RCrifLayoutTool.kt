@@ -1,6 +1,8 @@
 package ru.ravel.rcriflayouttool
 
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.dataformat.xml.XmlMapper
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.github.difflib.DiffUtils
 import com.github.difflib.patch.DeltaType
 import javafx.animation.PauseTransition
@@ -31,13 +33,15 @@ import org.fxmisc.richtext.model.StyleSpansBuilder
 import org.fxmisc.richtext.model.TwoDimensional.Bias
 import org.reactfx.Subscription
 import ru.ravel.rcriflayouttool.dto.*
-import ru.ravel.rcriflayouttool.model.segmentationtree.BusinessRule
 import ru.ravel.rcriflayouttool.model.connectorproperties.DataSource
+import ru.ravel.rcriflayouttool.model.dispatch.Dispatch
 import ru.ravel.rcriflayouttool.model.form.Form
 import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
 import ru.ravel.rcriflayouttool.model.mappingproperties.MappingActivityDefinition
 import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
+import ru.ravel.rcriflayouttool.model.segmentationtree.BusinessRule
 import ru.ravel.rcriflayouttool.model.segmentationtree.SegmentationTree
+import ru.ravel.rcriflayouttool.model.setvalue.SetValueActivity
 import ru.ravel.rcriflayouttool.util.GitUnit
 import ru.ravel.rcriflayouttool.util.XmlReader
 import java.io.File
@@ -51,7 +55,6 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import javafx.util.Duration as FxDuration
-
 
 class RCrifLayoutTool : Application() {
 
@@ -439,6 +442,7 @@ class RCrifLayoutTool : Application() {
 		attributeTableColumn.prefWidthProperty().bind(attributeTableView.widthProperty().subtract(2.0))
 		val attributeBox = VBox(
 			10.0,
+			Label("Поиск во всех *.xslt и SV файлах"),
 			HBox(Label("Название атрибута: "), attributeTextField),
 			attributeTableView,
 		).apply {
@@ -538,10 +542,12 @@ class RCrifLayoutTool : Application() {
 			Tab("Поиск использования коннекторов", connectorsTabContent).apply { isClosable = false },
 			Tab("Поиск атрибутов", attributeBox).apply { isClosable = false },
 			Tab("Layout marge", margeBp).apply { isClosable = false },
-			Tab("Поиск неиспользуемых FO", unusedFoBox).apply { isClosable = false },
-			Tab("Поиск неиспользуемых BR в ST+FM", unusedBrBox).apply { isClosable = false },
-			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
+			Tab("Неиспользуемые FO", unusedFoBox).apply { isClosable = false },
+			Tab("Неиспользуемые BR в ST+FM+DR", unusedBrBox).apply { isClosable = false },
 			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
+			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
+//			Tab("Пустые выходы ST", ).apply { isClosable = false },
+//			Tab("Неиспользуемые активности", ).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
 		)
 
@@ -1135,25 +1141,43 @@ class RCrifLayoutTool : Application() {
 
 
 	private fun searchAttribute(attributeName: String): List<String> {
-		val regex = Regex(
+		val mapper = XmlMapper()
+		val xsltAttributeRegex = Regex(
 			pattern = """<\s*xsl:attribute\s+name\s*=\s*"$attributeName"\s*>""",
 			options = setOf(RegexOption.IGNORE_CASE)
 		)
+		val svAttributeRegex = Regex("@([A-Za-z0-9_]+)$")
 
-		val attributesInProcedures = File(selectedDirectory, "Procedures")
-			.walkTopDown()
-			.filter { it.isFile && it.extension == "xslt" }
-			.filter { file -> regex.containsMatchIn(file.readText()) }
-			.map { file -> file.parentFile.name }
-			.toList()
+		val procedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+		val mainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
 
-		val attributesInMainFlow = File(selectedDirectory, "MainFlow")
-			.walkTopDown()
+		val xsltAttributes = (mainFlow + procedures)
 			.filter { it.isFile && it.extension == "xslt" }
-			.filter { file -> regex.containsMatchIn(file.readText()) }
+			.filter { file -> xsltAttributeRegex.containsMatchIn(XmlReader.readXmlSafe(file)) }
 			.map { file -> file.parentFile.name }
-			.toList()
-		return (attributesInProcedures + attributesInMainFlow).distinct()
+			.distinct()
+
+		val svAttributes = (mainFlow + procedures)
+			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+			.mapNotNull { file ->
+				val sv = mapper.readValue(file, SetValueActivity::class.java)
+				if (sv.setValues?.items != null) {
+					val xPaths = sv.setValues.items.mapNotNull { it.xPath }
+					val anyMatch = xPaths.any {
+						svAttributeRegex.find(it)?.groupValues?.get(0)?.removePrefix("@") == attributeName
+					}
+					if (anyMatch) {
+						file.parentFile.name
+					} else {
+						null
+					}
+				} else {
+					null
+				}
+			}
+			.distinct()
+
+		return (xsltAttributes + svAttributes)
 	}
 
 
@@ -1168,9 +1192,9 @@ class RCrifLayoutTool : Application() {
 		val erasuresInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
 		val result = (erasuresInMainFlow + erasuresInProcedures)
 			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
-			.filter { file -> sameNameTemplateRegex.containsMatchIn(file.readText()) }
+			.filter { file -> sameNameTemplateRegex.containsMatchIn(XmlReader.readXmlSafe(file)) }
 			.mapNotNull { xsltFile ->
-				val text = xsltFile.readText()
+				val text = XmlReader.readXmlSafe(xsltFile)
 				val erasedNames = sameNameTemplateRegex.findAll(text)
 					.map { it.groupValues[1] }
 					.toSet()
@@ -1383,6 +1407,8 @@ class RCrifLayoutTool : Application() {
 
 	private fun searchUnusedBr(): List<String?> {
 		val mapper = XmlMapper()
+			.registerKotlinModule()
+			.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
 
 		val allBrs = File(selectedDirectory, "BusinessRules")
 			.walkTopDown()
@@ -1392,6 +1418,7 @@ class RCrifLayoutTool : Application() {
 
 		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
 		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+
 		val segmentationTrees = (activitiesInMainFlow + activitiesInProcedures)
 			.filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
 			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java) }
@@ -1404,9 +1431,16 @@ class RCrifLayoutTool : Application() {
 			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), Form::class.java) }
 			.filter { f -> f.exitTimeouts?.any { it.exitBusinessRules != null } == true }
 
+		val dispatches = (activitiesInMainFlow + activitiesInProcedures)
+			.toList()
+			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), Dispatch::class.java) }
+			.filter { dr -> dr.dispatchRuleIDs?.dispatchTest?.businessRuleID != null }
+
 		return allBrs
 			.minus(segmentationTrees.flatMap { st -> st.rules?.ruleList?.map { it.ruleID } ?: emptyList() }.toSet())
 			.minus(forms.flatMap { fm -> fm.exitTimeouts?.map { it.exitBusinessRules } ?: emptyList() }.toSet())
+			.minus(dispatches.map { dr -> dr.dispatchRuleIDs?.dispatchTest?.businessRuleID }.toSet())
 	}
 
 

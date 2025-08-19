@@ -10,6 +10,8 @@ module ru.ravel.rcriflayouttool {
 	requires io.github.javadiffutils;
 	requires com.fasterxml.jackson.databind;
 	requires org.eclipse.jgit;
+	requires com.fasterxml.jackson.kotlin;
+	requires java.xml;
 
 
 	opens ru.ravel.rcriflayouttool to javafx.graphics, com.fasterxml.jackson.databind;
@@ -17,8 +19,10 @@ module ru.ravel.rcriflayouttool {
 	opens ru.ravel.rcriflayouttool.model.procedureproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	opens ru.ravel.rcriflayouttool.model.connectorproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	opens ru.ravel.rcriflayouttool.model.mappingproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
-	opens ru.ravel.rcriflayouttool.model.segmentationtree to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
-	opens ru.ravel.rcriflayouttool.model.form to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.segmentationtree to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml, kotlin.reflect;
+	opens ru.ravel.rcriflayouttool.model.form to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml, kotlin.reflect;
+	opens ru.ravel.rcriflayouttool.model.dispatch to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml, kotlin.reflect;
+	opens ru.ravel.rcriflayouttool.model.setvalue to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	exports ru.ravel.rcriflayouttool.util;
 	exports ru.ravel.rcriflayouttool;
 }
