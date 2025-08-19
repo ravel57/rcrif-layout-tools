@@ -91,7 +91,7 @@ class RCrifLayoutTool : Application() {
 			isEditable = true
 		}
 		val procedureTableView = TableView<ParamRow>().apply {
-			columns.addAll(searchProcedureTableColumn)
+			columns.setAll(searchProcedureTableColumn)
 			isEditable = true
 			setRowFactory { _ ->
 				val row = TableRow<ParamRow>()
@@ -103,7 +103,7 @@ class RCrifLayoutTool : Application() {
 						.flatMap { a ->
 							List(a.toActivity.size) { index -> "${a.exitName[index]} <-> ${a.toActivity[index]}" }
 						}
-					menu.items.addAll(items.distinct().map { MenuItem(it) })
+					menu.items.setAll(items.distinct().map { MenuItem(it) })
 					menu.show(row, event.screenX, event.screenY)
 				}
 				row
@@ -207,7 +207,7 @@ class RCrifLayoutTool : Application() {
 			isEditable = true
 		}
 		val connectorTableView = TableView<ParamRow>().apply {
-			columns.addAll(connectorTableColumn)
+			columns.setAll(connectorTableColumn)
 			isEditable = true
 		}
 		connectorTableColumn.prefWidthProperty().bind(connectorTableView.widthProperty().subtract(2.0))
@@ -372,7 +372,7 @@ class RCrifLayoutTool : Application() {
 			isEditable = true
 		}
 		val unusedProcedureTableView = TableView<ParamRow>().apply {
-			columns.addAll(unusedProcedureTableColumn)
+			columns.setAll(unusedProcedureTableColumn)
 			isEditable = true
 		}
 		unusedProcedureTableColumn.prefWidthProperty().bind(unusedProcedureTableView.widthProperty().subtract(2))
@@ -425,7 +425,7 @@ class RCrifLayoutTool : Application() {
 			isEditable = true
 		}
 		val attributeTableView = TableView<ParamRow>().apply {
-			columns.addAll(attributeTableColumn)
+			columns.setAll(attributeTableColumn)
 			isEditable = true
 		}
 		val attributeTextField = TextField().apply {
@@ -541,7 +541,7 @@ class RCrifLayoutTool : Application() {
 			setOnAction {
 				val flatMap = searchUnusedActivities().map {
 					TripleParamRow(
-						SimpleStringProperty(it.reference),
+						SimpleStringProperty(it.activity),
 						SimpleStringProperty(it.inCount.toString()),
 						SimpleStringProperty(it.outCount.toString())
 					)
@@ -551,6 +551,33 @@ class RCrifLayoutTool : Application() {
 		}
 		val unusedActivitiesBox = VBox(
 			10.0, unusedActivitiesButton, unusedActivitiesTableView
+		).apply {
+			padding = Insets(20.0)
+		}
+
+		/* Нелатинские названия */
+		val invalidCharactersFirstColumn = TableColumn<DualParamRow, String>("Нелатинские названия").apply {
+			cellValueFactory = Callback { it.value.firstField }
+			isEditable = true
+		}
+		val invalidCharactersSecondColumn = TableColumn<DualParamRow, String>("Нелатинские названия").apply {
+			cellValueFactory = Callback { it.value.secondField }
+			isEditable = true
+		}
+		val invalidCharactersTableView = TableView<DualParamRow>().apply {
+			columns.setAll(invalidCharactersFirstColumn, invalidCharactersSecondColumn)
+			isEditable = true
+		}
+		unusedBrColumn.prefWidthProperty().bind(unusedProcedureTableView.widthProperty().subtract(2))
+		val invalidCharactersButton = Button("Поиск").apply {
+			setOnAction {
+				invalidCharactersTableView.items.setAll(searchInvalidCharacters().map {
+					DualParamRow(SimpleStringProperty(it.activity), SimpleStringProperty(it.value))
+				})
+			}
+		}
+		val invalidCharactersBox = VBox(
+			10.0, invalidCharactersButton, invalidCharactersTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -574,6 +601,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
 //			Tab("Пустые выходы ST", ).apply { isClosable = false },
 			Tab("Неиспользуемые активности", unusedActivitiesBox).apply { isClosable = false },
+			Tab("Нелатинские названия", invalidCharactersBox).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
 		)
 
@@ -1169,10 +1197,13 @@ class RCrifLayoutTool : Application() {
 			pattern = """<\s*xsl:attribute\s+name\s*=\s*"$attributeName"\s*>""",
 			options = setOf(RegexOption.IGNORE_CASE)
 		)
-		val svAttributeRegex = Regex("@([A-Za-z0-9_]+)$")
+		val svAttributeRegex = Regex(
+			"@([A-Za-z0-9_]+)$",
+			options = setOf(RegexOption.IGNORE_CASE)
+		)
 
-		val procedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
 		val mainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val procedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
 
 		val xsltAttributes = (mainFlow + procedures)
 			.filter { it.isFile && it.extension == "xslt" }
@@ -1504,10 +1535,10 @@ class RCrifLayoutTool : Application() {
 					val outCount = stats["out"] ?: 0
 					if (
 						(inCount + outCount < 2)
-						&& el.reference?.startsWith("EP_") != true
-						&& (el.reference?.startsWith("PR_") != true && outCount == 0)
+						&& el.reference?.startsWith("EP_") != true /*FIXME проверять по типу активности*/
+						&& (el.reference?.startsWith("PR_") != true && outCount == 0) /*FIXME проверять по типу активности*/
 					) {
-						EmptyActivity(el.reference, el.uid, inCount, outCount)
+						EmptyActivity("${file.parentFile.name}\\${el.reference}", el.uid, inCount, outCount)
 					} else {
 						null
 					}
@@ -1516,6 +1547,40 @@ class RCrifLayoutTool : Application() {
 			.distinct()
 		return result
 	}
+
+
+	private fun searchInvalidCharacters(): List<InvalidCharacter> {
+		val nonEnglishRegex = Regex("""[^\x00-\x7F]""")
+		val tagRegex = Regex("""</?\s*([^\s>/]+)""")
+		val attrRegex = Regex("""\b([^\s=:/><]+)\s*=""")
+		val xpathAttrRegex = Regex("""\b(?:select|test|match|use)\s*=\s*(['"])(.*?)\1""")
+		val xpathRegex = Regex("""/([^\s/\[\]@'"=<>()]+)""")
+		val commentRegex = Regex("""<!--.*?-->""", setOf(RegexOption.DOT_MATCHES_ALL))
+		val stringLiteralRegex = Regex("""(['"])([^'"\r\n]*)\1""")
+
+		val mainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val procedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+
+		val result = (mainFlow + procedures)
+			.filter { it.isFile && it.extension == "xslt" }
+			.flatMap { file ->
+				val input = commentRegex.replace(XmlReader.readXmlSafe(file), "")
+				val allMatches = mutableListOf<String>()
+				tagRegex.findAll(input).forEach { allMatches.add(it.groupValues[1]) }
+				attrRegex.findAll(input).forEach { allMatches.add(it.groupValues[1]) }
+				xpathAttrRegex.findAll(input).forEach { m ->
+					var expr = m.groupValues[2]
+					expr = stringLiteralRegex.replace(expr, "\"\"")
+					xpathRegex.findAll(expr).forEach { allMatches.add(it.groupValues[1]) }
+				}
+				return@flatMap allMatches
+					.filterNot { it.contains("&gt;") || it.contains("&lt;") || it.contains("&amp;") }
+					.filter { nonEnglishRegex.containsMatchIn(it) }
+					.map { invalid -> InvalidCharacter("${file.parentFile.name}\\${file.name}", invalid) }
+			}
+		return result
+	}
+
 
 
 	override fun stop() {
