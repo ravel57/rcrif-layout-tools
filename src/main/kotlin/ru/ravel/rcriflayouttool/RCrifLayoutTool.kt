@@ -556,11 +556,11 @@ class RCrifLayoutTool : Application() {
 		}
 
 		/* Нелатинские названия */
-		val invalidCharactersFirstColumn = TableColumn<DualParamRow, String>("Нелатинские названия").apply {
+		val invalidCharactersFirstColumn = TableColumn<DualParamRow, String>("Активность").apply {
 			cellValueFactory = Callback { it.value.firstField }
 			isEditable = true
 		}
-		val invalidCharactersSecondColumn = TableColumn<DualParamRow, String>("Нелатинские названия").apply {
+		val invalidCharactersSecondColumn = TableColumn<DualParamRow, String>("Строка").apply {
 			cellValueFactory = Callback { it.value.secondField }
 			isEditable = true
 		}
@@ -578,6 +578,36 @@ class RCrifLayoutTool : Application() {
 		}
 		val invalidCharactersBox = VBox(
 			10.0, invalidCharactersButton, invalidCharactersTableView
+		).apply {
+			padding = Insets(20.0)
+		}
+
+		/* Неправильные названия */
+		val invalidNamingFirstColumn = TableColumn<TripleParamRow, String>("Неправильные файла").apply {
+			cellValueFactory = Callback { it.value.firstField }
+			isEditable = true
+		}
+		val invalidNamingSecondColumn = TableColumn<TripleParamRow, String>("Неправильное название").apply {
+			cellValueFactory = Callback { it.value.secondField }
+			isEditable = true
+		}
+		val invalidNamingThirdColumn = TableColumn<TripleParamRow, String>("Тип").apply {
+			cellValueFactory = Callback { it.value.thirdField }
+			isEditable = true
+		}
+		val invalidNamingTableView = TableView<TripleParamRow>().apply {
+			columns.setAll(invalidNamingFirstColumn, invalidNamingSecondColumn, invalidNamingThirdColumn)
+			isEditable = true
+		}
+		val invalidNamingButton = Button("Поиск").apply {
+			setOnAction {
+				invalidNamingTableView.items.setAll(searchInvalidNaming().map {
+					TripleParamRow(SimpleStringProperty(it.first), SimpleStringProperty(it.second), SimpleStringProperty(it.third))
+				})
+			}
+		}
+		val invalidNamingBox = VBox(
+			10.0, invalidNamingButton, invalidNamingTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -602,6 +632,7 @@ class RCrifLayoutTool : Application() {
 //			Tab("Пустые выходы ST", ).apply { isClosable = false },
 			Tab("Неиспользуемые активности", unusedActivitiesBox).apply { isClosable = false },
 			Tab("Нелатинские названия", invalidCharactersBox).apply { isClosable = false },
+			Tab("Неправильные названия", invalidNamingBox).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
 		)
 
@@ -1237,6 +1268,7 @@ class RCrifLayoutTool : Application() {
 
 	private fun searchErasures(): List<Pair<String, List<String>>> {
 		val mapper = XmlMapper()
+		val commentRegex = Regex("<!--.*?-->", setOf(RegexOption.DOT_MATCHES_ALL))
 		val sameNameTemplateRegex = Regex(
 			"""(?s)<\s*xsl:template\s+name\s*=\s*"([^"]+)"\s*>.*?<\s*xsl:element\s+name\s*="\1"\s*/>.*?</\s*xsl:template\s*>""",
 			RegexOption.IGNORE_CASE
@@ -1246,9 +1278,9 @@ class RCrifLayoutTool : Application() {
 		val erasuresInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
 		val result = (erasuresInMainFlow + erasuresInProcedures)
 			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
-			.filter { file -> sameNameTemplateRegex.containsMatchIn(XmlReader.readXmlSafe(file)) }
 			.mapNotNull { xsltFile ->
-				val text = XmlReader.readXmlSafe(xsltFile)
+				val text = commentRegex.replace(XmlReader.readXmlSafe(xsltFile), "")
+				if (!sameNameTemplateRegex.containsMatchIn(text)) return@mapNotNull null
 				val erasedNames = sameNameTemplateRegex.findAll(text)
 					.map { it.groupValues[1] }
 					.toSet()
@@ -1581,6 +1613,43 @@ class RCrifLayoutTool : Application() {
 		return result
 	}
 
+
+	private fun searchInvalidNaming(): List<Triple<String, String, String>> {
+		val regex = Regex("""ReferenceName\s*=\s*"([^"]+)"""")
+
+		val mainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val procedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+
+		val result = (mainFlow + procedures)
+			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+			.mapNotNull { file ->
+				val header = XmlReader.readXmlSafe(file).lines().first().replace("\uFEFF", "")
+				val match = regex.find(header)
+				val referenceName = match?.groupValues?.get(1)
+				val naming = when {
+					header.startsWith("<BizRuleActivityDefinition") -> Naming.BUSINESS_RULE
+					header.startsWith("<DataSourceActivityDefinition") -> Naming.DATA_SOURCE
+					header.startsWith("<DispatchActivityDefinition") -> Naming.DISPATCH
+					header.startsWith("<FormActivityDefinition") -> Naming.FORM
+					header.startsWith("<MappingActivityDefinition") -> Naming.DATA_MAPPING
+					header.startsWith("<ProcedureCallActivityDefinition") -> Naming.PROCEDURE_CALL
+					header.startsWith("<SegmentationTreeActivityDefinition") -> Naming.SEGMENTATION_TREE
+					header.startsWith("<SetValueActivityDefinition") -> Naming.SET_VALUE
+					header.startsWith("<WaitActivityDefinition") -> Naming.WAIT
+					header.startsWith("<ProcedureReturnActivityDefinition") -> Naming.PROCEDURE_RETURN
+					header.startsWith("<EndProcessActivityDefinition") -> Naming.END_PROCEDURE
+					header.startsWith("<SendEMailActivityDefinition") -> Naming.SEND_EMAIL
+					header.startsWith("<PhaseActivityDefinition") -> Naming.SET_PHASE
+					else -> Naming.UNKNOWN
+				}
+				if (referenceName?.startsWith("${naming.prefix}_") == false) {
+					Triple(file.parentFile.parentFile.name, referenceName, naming.name)
+				} else {
+					null
+				}
+			}
+		return result
+	}
 
 
 	override fun stop() {
