@@ -621,7 +621,7 @@ class RCrifLayoutTool : Application() {
 			cellValueFactory = Callback { it.value.firstField }
 			isEditable = true
 		}
-		val emptyStExitsSecondColumn = TableColumn<DualParamRow, String>("Строка").apply {
+		val emptyStExitsSecondColumn = TableColumn<DualParamRow, String>("BusinessRule").apply {
 			cellValueFactory = Callback { it.value.secondField }
 			isEditable = true
 		}
@@ -1689,32 +1689,39 @@ class RCrifLayoutTool : Application() {
 		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
 		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
 
-		val segmentationTrees = (activitiesInMainFlow + activitiesInProcedures)
-			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-			.map { xmlFile ->
-				val st = mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java)
-				val connIds = st.rules?.ruleList?.map { it.connectionID } ?: emptyList()
-				xmlFile.parentFile.name to connIds
-			}
+		val segmentationTrees: List<Pair<SegmentationTree, File>> = (activitiesInMainFlow + activitiesInProcedures)
+				.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+				.mapNotNull { xmlFile ->
+					val tree = mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java)
+					tree.rules?.let { tree to xmlFile }
+				}
+
+		val segmentationTreesReferenceNames = segmentationTrees.map { it.first.referenceName }
 
 		val layouts = (activitiesInMainFlow + activitiesInProcedures)
 			.filter { it.isFile && it.name.equals("Layout.xml", ignoreCase = true) }
-			.associateBy(
-				keySelector = { it.parentFile.name },
-				valueTransform = { file ->
-					val layout = mapper.readValue(XmlReader.readXmlSafe(file), DiagramLayout::class.java)
-					layout.connections?.diagramConnections
-						?.flatMap { con -> con.endPoints?.points?.mapNotNull { it.exitPointRef } ?: emptyList() }
-						?.filter { it != "Enter" }
-						?.toSet()
-						?: emptySet()
-				}
-			)
+			.map { file -> mapper.readValue(XmlReader.readXmlSafe(file), DiagramLayout::class.java) }
 
-		return segmentationTrees.flatMap { (folder, connIds) ->
-			val used = layouts[folder] ?: emptySet()
-			connIds.filterNot { it in used }.map { folder to it }
+		val result = mutableListOf<Pair<String, String>>()
+
+		layouts.forEach { layout ->
+			val elements = layout.elements?.diagramElements?.filter { it.reference in segmentationTreesReferenceNames } ?: emptyList()
+
+			val usedExitRefs = layout.connections?.diagramConnections
+				?.flatMap { con -> con.endPoints?.points?.mapNotNull { it.exitPointRef } ?: emptyList() }
+				?.toSet() ?: emptySet()
+
+			segmentationTrees.forEach { (tree, propsFile) ->
+				if (elements.any { it.reference == tree.referenceName }) {
+					val allExits = (tree.rules?.ruleList?.map { it.connectionID }?.toSet() ?: emptySet()) + "AllFalse"
+					val notUsed = allExits - usedExitRefs
+
+					result += notUsed.map { propsFile.parentFile.name to it }
+				}
+			}
 		}
+
+		return result
 	}
 
 
