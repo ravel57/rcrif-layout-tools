@@ -583,7 +583,7 @@ class RCrifLayoutTool : Application() {
 		}
 
 		/* Неправильные названия */
-		val invalidNamingFirstColumn = TableColumn<TripleParamRow, String>("Неправильные файла").apply {
+		val invalidNamingFirstColumn = TableColumn<TripleParamRow, String>("Процедура").apply {
 			cellValueFactory = Callback { it.value.firstField }
 			isEditable = true
 		}
@@ -602,12 +602,43 @@ class RCrifLayoutTool : Application() {
 		val invalidNamingButton = Button("Поиск").apply {
 			setOnAction {
 				invalidNamingTableView.items.setAll(searchInvalidNaming().map {
-					TripleParamRow(SimpleStringProperty(it.first), SimpleStringProperty(it.second), SimpleStringProperty(it.third))
+					TripleParamRow(
+						SimpleStringProperty(it.first),
+						SimpleStringProperty(it.second),
+						SimpleStringProperty(it.third)
+					)
 				})
 			}
 		}
 		val invalidNamingBox = VBox(
 			10.0, invalidNamingButton, invalidNamingTableView
+		).apply {
+			padding = Insets(20.0)
+		}
+
+		/* Пустые выходы ST */
+		val emptyStExitsFirstColumn = TableColumn<DualParamRow, String>("Активность").apply {
+			cellValueFactory = Callback { it.value.firstField }
+			isEditable = true
+		}
+		val emptyStExitsSecondColumn = TableColumn<DualParamRow, String>("Строка").apply {
+			cellValueFactory = Callback { it.value.secondField }
+			isEditable = true
+		}
+		val emptyStExitsTableView = TableView<DualParamRow>().apply {
+			columns.setAll(emptyStExitsFirstColumn, emptyStExitsSecondColumn)
+			isEditable = true
+		}
+		unusedBrColumn.prefWidthProperty().bind(unusedProcedureTableView.widthProperty().subtract(2))
+		val emptyStExitsButton = Button("Поиск").apply {
+			setOnAction {
+				emptyStExitsTableView.items.setAll(searchEmptyStExits().map {
+					DualParamRow(SimpleStringProperty(it.first), SimpleStringProperty(it.second))
+				})
+			}
+		}
+		val emptyStExitsBox = VBox(
+			10.0, emptyStExitsButton, emptyStExitsTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -629,10 +660,10 @@ class RCrifLayoutTool : Application() {
 			Tab("Неиспользуемые BR в ST+FM+DR", unusedBrBox).apply { isClosable = false },
 			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
 			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
-//			Tab("Пустые выходы ST", ).apply { isClosable = false },
 			Tab("Неиспользуемые активности", unusedActivitiesBox).apply { isClosable = false },
 			Tab("Нелатинские названия", invalidCharactersBox).apply { isClosable = false },
 			Tab("Неправильные названия", invalidNamingBox).apply { isClosable = false },
+			Tab("Пустые выходы ST", emptyStExitsBox).apply { isClosable = false },
 			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
 		)
 
@@ -1649,6 +1680,41 @@ class RCrifLayoutTool : Application() {
 				}
 			}
 		return result
+	}
+
+
+	private fun searchEmptyStExits(): List<Pair<String, String>> {
+		val mapper = XmlMapper()
+
+		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+
+		val segmentationTrees = (activitiesInMainFlow + activitiesInProcedures)
+			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+			.map { xmlFile ->
+				val st = mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java)
+				val connIds = st.rules?.ruleList?.map { it.connectionID } ?: emptyList()
+				xmlFile.parentFile.name to connIds
+			}
+
+		val layouts = (activitiesInMainFlow + activitiesInProcedures)
+			.filter { it.isFile && it.name.equals("Layout.xml", ignoreCase = true) }
+			.associateBy(
+				keySelector = { it.parentFile.name },
+				valueTransform = { file ->
+					val layout = mapper.readValue(XmlReader.readXmlSafe(file), DiagramLayout::class.java)
+					layout.connections?.diagramConnections
+						?.flatMap { con -> con.endPoints?.points?.mapNotNull { it.exitPointRef } ?: emptyList() }
+						?.filter { it != "Enter" }
+						?.toSet()
+						?: emptySet()
+				}
+			)
+
+		return segmentationTrees.flatMap { (folder, connIds) ->
+			val used = layouts[folder] ?: emptySet()
+			connIds.filterNot { it in used }.map { folder to it }
+		}
 	}
 
 
