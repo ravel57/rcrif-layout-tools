@@ -1968,9 +1968,6 @@ class RCrifLayoutTool : Application() {
 				enable(SerializationFeature.WRITE_EMPTY_JSON_ARRAYS)
 			}
 
-//		val xmlBody = mapper.writeValueAsString(obj)
-//		val encoding = if (charset.name().startsWith("UTF-16")) "UTF-16" else charset.name()
-
 		file.outputStream().use { os ->
 			writeBom(os, charset)
 			OutputStreamWriter(os, charset).use { w ->
@@ -1981,7 +1978,10 @@ class RCrifLayoutTool : Application() {
 				}
 				w.write("""<?xml version="1.0" encoding="$encLabel"?>""")
 				w.write("\n")
-				w.write(mapper.writeValueAsString(obj))
+				val xml = mapper.writeValueAsString(obj)
+					.replace(Regex("/>"), " />")
+					.trimEnd()
+				w.write(xml)
 			}
 		}
 	}
