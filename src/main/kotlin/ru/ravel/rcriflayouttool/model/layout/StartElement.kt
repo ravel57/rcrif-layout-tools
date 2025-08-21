@@ -1,10 +1,12 @@
 package ru.ravel.rcriflayouttool.model.layout
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonInclude
-import com.fasterxml.jackson.dataformat.xml.annotation.*
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty
 
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
-data class DiagramElement(
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class StartElement(
 	@JacksonXmlProperty(isAttribute = true, localName = "UID")
 	val uid: String? = null,
 
@@ -20,17 +22,9 @@ data class DiagramElement(
 	@JacksonXmlProperty(localName = "Height")
 	val height: Int? = null,
 
-	@JacksonXmlProperty(localName = "Reference")
-	val reference: String? = null,
-
-	@JacksonXmlProperty(localName = "Comment")
-	val comment: Comment? = null,
-
 	@JacksonXmlProperty(localName = "OutConnectionRefs")
-	@JsonInclude(JsonInclude.Include.ALWAYS)
-	val outConnectionRefs: RefList? = null,
+	val outConnectionRefs: RefList? = RefList(),
 
 	@JacksonXmlProperty(localName = "InConnectionRefs")
-	@JsonInclude(JsonInclude.Include.ALWAYS)
-	val inConnectionRefs: RefList? = null,
+	val inConnectionRefs: RefList? = RefList(),
 )

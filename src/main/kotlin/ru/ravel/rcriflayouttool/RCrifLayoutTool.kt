@@ -47,6 +47,9 @@ import ru.ravel.rcriflayouttool.model.setvalue.SetValueActivity
 import ru.ravel.rcriflayouttool.util.GitUnit
 import ru.ravel.rcriflayouttool.util.XmlReader
 import java.io.File
+import java.io.OutputStream
+import java.io.OutputStreamWriter
+import java.nio.charset.Charset
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.CancellationException
@@ -1941,19 +1944,46 @@ class RCrifLayoutTool : Application() {
 				)
 			)
 
-		layoutFile.writeText(toPrettyXml(diagramLayout), XmlReader.getEncoding(layoutFile.readBytes()))
+		toPrettyXml(diagramLayout, layoutFile, XmlReader.getEncoding(layoutFile.readBytes()))
 	}
 
 
-	private fun toPrettyXml(obj: Any): String {
-		val xmlMapper = XmlMapper().apply {
-			registerKotlinModule()
-			enable(SerializationFeature.INDENT_OUTPUT)
-			setSerializationInclusion(JsonInclude.Include.NON_NULL)
+	private fun writeBom(os: OutputStream, cs: Charset) {
+		when (cs) {
+			Charsets.UTF_16BE -> os.write(byteArrayOf(0xFE.toByte(), 0xFF.toByte()))
+			Charsets.UTF_16LE -> os.write(byteArrayOf(0xFF.toByte(), 0xFE.toByte()))
+			Charsets.UTF_8 -> os.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
 		}
+	}
 
-		val xmlBody = xmlMapper.writeValueAsString(obj)
-		return "<?xml version=\"1.0\" encoding=\"utf-16\"?>\n${xmlBody}"
+
+	private fun toPrettyXml(obj: Any, file: File, charset: Charset) {
+		val mapper = XmlMapper.builder()
+			.defaultUseWrapper(false)
+			.build()
+			.apply {
+				registerKotlinModule()
+				enable(SerializationFeature.INDENT_OUTPUT)
+				setSerializationInclusion(JsonInclude.Include.ALWAYS)
+				enable(SerializationFeature.WRITE_EMPTY_JSON_ARRAYS)
+			}
+
+//		val xmlBody = mapper.writeValueAsString(obj)
+//		val encoding = if (charset.name().startsWith("UTF-16")) "UTF-16" else charset.name()
+
+		file.outputStream().use { os ->
+			writeBom(os, charset)
+			OutputStreamWriter(os, charset).use { w ->
+				val encLabel = when (charset.name().uppercase()) {
+					"UTF-16LE" -> "utf-16"
+					"UTF-16BE" -> "utf-16"
+					else -> charset.name().lowercase()
+				}
+				w.write("""<?xml version="1.0" encoding="$encLabel"?>""")
+				w.write("\n")
+				w.write(mapper.writeValueAsString(obj))
+			}
+		}
 	}
 
 
