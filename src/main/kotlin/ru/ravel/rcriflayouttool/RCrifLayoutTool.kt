@@ -1,6 +1,8 @@
 package ru.ravel.rcriflayouttool
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.dataformat.xml.XmlMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.github.difflib.DiffUtils
@@ -36,8 +38,7 @@ import ru.ravel.rcriflayouttool.dto.*
 import ru.ravel.rcriflayouttool.model.connectorproperties.DataSource
 import ru.ravel.rcriflayouttool.model.dispatch.Dispatch
 import ru.ravel.rcriflayouttool.model.form.Form
-import ru.ravel.rcriflayouttool.model.layout.DiagramLayout
-import ru.ravel.rcriflayouttool.dto.EmptyActivity
+import ru.ravel.rcriflayouttool.model.layout.*
 import ru.ravel.rcriflayouttool.model.mappingproperties.MappingActivityDefinition
 import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
 import ru.ravel.rcriflayouttool.model.segmentationtree.BusinessRule
@@ -79,6 +80,16 @@ class RCrifLayoutTool : Application() {
 
 		val allMarge = FXCollections.observableArrayList<String>()
 		val filteredMarge = FilteredList(allMarge) { true }
+
+		val filteredAddingNewSplit = FilteredList(allMarge) { true }
+		val allFormNewSplit = FXCollections.observableArrayList<String>()
+		val filteredFormNewSplit = FilteredList(allFormNewSplit) { true }
+		val allToNewSplit = FXCollections.observableArrayList<String>()
+		val filteredToNewSplit = FilteredList(allToNewSplit) { true }
+		val allFormExitsNewSplit = FXCollections.observableArrayList<String>()
+		val filteredFormExitsNewSplit = FilteredList(allFormExitsNewSplit) { true }
+		val allToNewExitsSplit = FXCollections.observableArrayList<String>()
+		val filteredToExitsNewSplit = FilteredList(allToNewExitsSplit) { true }
 
 		val folderField = TextField().apply {
 			isEditable = false
@@ -291,7 +302,7 @@ class RCrifLayoutTool : Application() {
 							File(selectedDirectory, "Procedures/${newVal}/Layout.xml")
 						}
 						val text = file.let { f ->
-							f.takeIf { it.exists() }?.readText(charset = Charsets.UTF_16LE) ?: ""
+							XmlReader.readXmlSafe(f.takeIf { it.exists() })
 						}
 						margeArea2.replaceText(text)
 						val previousFileVersion = GitUnit.getPreviousFileVersion(selectedDirectory!!, file.absolutePath)
@@ -644,8 +655,162 @@ class RCrifLayoutTool : Application() {
 		}
 
 		/* Добавление связей */
-		val emptyTabContent = VBox(
-			10.0, Label("Пусто")
+		val addingNewSplitComboBox = ComboBox(filteredAddingNewSplit).apply {
+			isEditable = true
+			promptText = "Layout"
+			var guard = false
+			editor.textProperty().addListener { _, _, newValue ->
+				Platform.runLater {
+					if (guard) return@runLater
+					guard = true
+					val predicate: (String) -> Boolean = { s ->
+						newValue.isNullOrBlank() || s.contains(newValue, ignoreCase = true)
+					}
+					filteredAddingNewSplit.setPredicate(predicate)
+					if (newValue.isNullOrBlank()) {
+						selectionModel.clearSelection()
+						value = null
+						hide()
+					} else {
+						if (filteredAddingNewSplit.isNotEmpty()) show() else hide()
+					}
+					guard = false
+				}
+			}
+			valueProperty().addListener { _, _, newVal ->
+				Platform.runLater {
+					if (newVal != null) {
+						filteredAddingNewSplit.setPredicate { true }
+						editor.text = newVal
+						hide()
+
+						val dir = if (newVal == "MainFlow") {
+							File(selectedDirectory, "MainFlow")
+						} else {
+							File(selectedDirectory, "Procedures/$newVal")
+						}
+
+						if (dir.exists() && dir.isDirectory) {
+							val subFolders = dir.listFiles()
+								?.filter { it.isDirectory }
+								?.map { it.name }
+								?.sorted()
+								?: emptyList()
+
+							allFormNewSplit.setAll(subFolders)
+							allToNewSplit.setAll(subFolders)
+						} else {
+							allFormNewSplit.clear()
+							allToNewSplit.clear()
+						}
+					}
+				}
+			}
+
+			setOnHidden { commitComboValue(this, allFormNewSplit) }
+			editor.setOnAction { commitComboValue(this, allFormNewSplit) }
+			focusedProperty().addListener { _, _, hasFocus -> if (!hasFocus) commitComboValue(this, allFormNewSplit) }
+		}
+		val fromNewSplitComboBox = ComboBox(filteredFormNewSplit).apply {
+			isEditable = true
+			promptText = "Активность"
+			maxWidth = 200.0
+			var guard = false
+
+			editor.textProperty().addListener { _, _, newValue ->
+				Platform.runLater {
+					if (guard) return@runLater
+					guard = true
+					val predicate: (String) -> Boolean = { s ->
+						newValue.isNullOrBlank() || s.contains(newValue, ignoreCase = true)
+					}
+					filteredFormNewSplit.setPredicate(predicate)
+					if (newValue.isNullOrBlank()) {
+						selectionModel.clearSelection()
+						value = null
+						hide()
+					} else {
+						if (filteredFormNewSplit.isNotEmpty()) show() else hide()
+					}
+					guard = false
+				}
+			}
+
+			valueProperty().addListener { _, _, newVal ->
+				Platform.runLater {
+					if (newVal != null) {
+						filteredFormNewSplit.setPredicate { true }
+						editor.text = newVal
+						hide()
+					}
+				}
+			}
+		}
+		val fromNewSplitComboBoxExits = TextField().apply {//ComboBox(filteredFormExitsNewSplit).apply {
+			isEditable = true
+			promptText = "Выход"
+			maxWidth = 200.0
+		}
+		val toNewSplitComboBox = ComboBox(filteredToNewSplit).apply {
+			isEditable = true
+			promptText = "Активность"
+			maxWidth = 200.0
+			var guard = false
+
+			editor.textProperty().addListener { _, _, newValue ->
+				Platform.runLater {
+					if (guard) return@runLater
+					guard = true
+					val predicate: (String) -> Boolean = { s ->
+						newValue.isNullOrBlank() || s.contains(newValue, ignoreCase = true)
+					}
+					filteredToNewSplit.setPredicate(predicate)
+					if (newValue.isNullOrBlank()) {
+						selectionModel.clearSelection()
+						value = null
+						hide()
+					} else {
+						if (filteredToNewSplit.isNotEmpty()) show() else hide()
+					}
+					guard = false
+				}
+			}
+
+			valueProperty().addListener { _, _, newVal ->
+				Platform.runLater {
+					if (newVal != null) {
+						filteredToNewSplit.setPredicate { true }
+						editor.text = newVal
+						hide()
+					}
+				}
+			}
+		}
+		val toNewSplitComboBoxExits = TextField().apply {// ComboBox(filteredToExitsNewSplit).apply {
+			isEditable = true
+			promptText = "Вход"
+			maxWidth = 200.0
+			text = "Enter"
+		}
+		val addNewSplitButton = Button().apply {
+			text = "Добавить связь"
+
+			setOnAction {
+				addingNewSplit(
+					addingNewSplitComboBox.editor.text ?: "",
+					fromNewSplitComboBox.editor.text ?: "",
+					fromNewSplitComboBoxExits.text ?: "",
+					toNewSplitComboBox.editor.text ?: "",
+					toNewSplitComboBoxExits.text ?: ""
+				)
+			}
+		}
+		val addingNewSplitHBox = VBox(
+			4.0,
+			addingNewSplitComboBox,
+			HBox(Label("Из"), fromNewSplitComboBox, fromNewSplitComboBoxExits),
+			HBox(Label("В"), toNewSplitComboBox, toNewSplitComboBoxExits),
+			addNewSplitButton,
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -664,7 +829,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Нелатинские названия", invalidCharactersBox).apply { isClosable = false },
 			Tab("Неправильные названия", invalidNamingBox).apply { isClosable = false },
 			Tab("Пустые выходы ST", emptyStExitsBox).apply { isClosable = false },
-			Tab("Добавление связей", emptyTabContent).apply { isClosable = false },
+			Tab("Добавление связей", addingNewSplitHBox).apply { isClosable = false },
 		)
 
 		VBox.setVgrow(tabPane, Priority.ALWAYS)
@@ -1690,11 +1855,11 @@ class RCrifLayoutTool : Application() {
 		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
 
 		val segmentationTrees: List<Pair<SegmentationTree, File>> = (activitiesInMainFlow + activitiesInProcedures)
-				.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-				.mapNotNull { xmlFile ->
-					val tree = mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java)
-					tree.rules?.let { tree to xmlFile }
-				}
+			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+			.mapNotNull { xmlFile ->
+				val tree = mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java)
+				tree.rules?.let { tree to xmlFile }
+			}
 
 		val segmentationTreesReferenceNames = segmentationTrees.map { it.first.referenceName }
 
@@ -1705,7 +1870,8 @@ class RCrifLayoutTool : Application() {
 		val result = mutableListOf<Pair<String, String>>()
 
 		layouts.forEach { layout ->
-			val elements = layout.elements?.diagramElements?.filter { it.reference in segmentationTreesReferenceNames } ?: emptyList()
+			val elements =
+				layout.elements?.diagramElements?.filter { it.reference in segmentationTreesReferenceNames } ?: emptyList()
 
 			val usedExitRefs = layout.connections?.diagramConnections
 				?.flatMap { con -> con.endPoints?.points?.mapNotNull { it.exitPointRef } ?: emptyList() }
@@ -1722,6 +1888,72 @@ class RCrifLayoutTool : Application() {
 		}
 
 		return result
+	}
+
+
+	private fun commitComboValue(cb: ComboBox<String>, allItems: List<String>) {
+		val txt = cb.editor.text?.trim().orEmpty()
+		if (txt.isEmpty()) return
+		val match = allItems.firstOrNull { it.equals(txt, ignoreCase = true) }
+		cb.value = match
+	}
+
+
+	private fun addingNewSplit(layout: String, from: String, fromExit: String, to: String, toExit: String) {
+		val mapper = XmlMapper()
+
+		val dir =
+			if (layout.isNotEmpty() && from.isNotEmpty() && fromExit.isNotEmpty() && to.isNotEmpty() && toExit.isNotEmpty()) {
+				if (layout == "MainFlow") {
+					File(selectedDirectory, "MainFlow")
+				} else {
+					File(selectedDirectory, "Procedures/$layout")
+				}
+			} else {
+				return
+			}
+
+		val layoutFile = File(dir, "Layout.xml")
+
+		val diagramLayout = mapper.readValue(layoutFile, DiagramLayout::class.java)
+
+		val fromUid = diagramLayout
+			.elements?.diagramElements
+			?.first { el -> el.reference == from }
+			?.uid
+
+		val toUid = diagramLayout
+			.elements?.diagramElements
+			?.first { el -> el.reference == to }
+			?.uid
+
+		diagramLayout.connections?.diagramConnections
+			?.add(
+				DiagramConnection(
+					uid = UUID.randomUUID().toString(),
+					splits = Splits(emptyList()),
+					endPoints = EndPoints(
+						listOf(
+							DiagramEndPoint(elementRef = fromUid, exitPointRef = fromExit),
+							DiagramEndPoint(elementRef = toUid, exitPointRef = toExit),
+						)
+					)
+				)
+			)
+
+		layoutFile.writeText(toPrettyXml(diagramLayout), XmlReader.getEncoding(layoutFile.readBytes()))
+	}
+
+
+	private fun toPrettyXml(obj: Any): String {
+		val xmlMapper = XmlMapper().apply {
+			registerKotlinModule()
+			enable(SerializationFeature.INDENT_OUTPUT)
+			setSerializationInclusion(JsonInclude.Include.NON_NULL)
+		}
+
+		val xmlBody = xmlMapper.writeValueAsString(obj)
+		return "<?xml version=\"1.0\" encoding=\"utf-16\"?>\n${xmlBody}"
 	}
 
 

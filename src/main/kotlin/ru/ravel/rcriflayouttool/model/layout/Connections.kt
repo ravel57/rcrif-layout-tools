@@ -7,5 +7,5 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty
 data class Connections(
 	@JacksonXmlElementWrapper(useWrapping = false)
 	@JacksonXmlProperty(localName = "DiagramConnection")
-	val diagramConnections: List<DiagramConnection> = emptyList()
+	val diagramConnections: MutableList<DiagramConnection> = mutableListOf()
 )
