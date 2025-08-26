@@ -35,15 +35,19 @@ import org.fxmisc.richtext.model.StyleSpansBuilder
 import org.fxmisc.richtext.model.TwoDimensional.Bias
 import org.reactfx.Subscription
 import ru.ravel.rcriflayouttool.dto.*
-import ru.ravel.rcriflayouttool.model.connectorproperties.DataSource
+import ru.ravel.rcriflayouttool.model.bizrule.BizRule
+import ru.ravel.rcriflayouttool.model.datamapping.DataMapping
+import ru.ravel.rcriflayouttool.model.datasource.DataSource
 import ru.ravel.rcriflayouttool.model.dispatch.Dispatch
 import ru.ravel.rcriflayouttool.model.form.Form
 import ru.ravel.rcriflayouttool.model.layout.*
-import ru.ravel.rcriflayouttool.model.mappingproperties.MappingActivityDefinition
-import ru.ravel.rcriflayouttool.model.procedureproperties.ProcedureCallActivityDefinition
+import ru.ravel.rcriflayouttool.model.procedure.ProcedureCall
 import ru.ravel.rcriflayouttool.model.segmentationtree.BusinessRule
 import ru.ravel.rcriflayouttool.model.segmentationtree.SegmentationTree
+import ru.ravel.rcriflayouttool.model.sendemail.SendEmail
+import ru.ravel.rcriflayouttool.model.setphase.SetPhase
 import ru.ravel.rcriflayouttool.model.setvalue.SetValueActivity
+import ru.ravel.rcriflayouttool.model.wait.Wait
 import ru.ravel.rcriflayouttool.util.GitUnit
 import ru.ravel.rcriflayouttool.util.XmlReader
 import java.io.File
@@ -93,6 +97,12 @@ class RCrifLayoutTool : Application() {
 		val filteredFormExitsNewSplit = FilteredList(allFormExitsNewSplit) { true }
 		val allToNewExitsSplit = FXCollections.observableArrayList<String>()
 		val filteredToExitsNewSplit = FilteredList(allToNewExitsSplit) { true }
+
+		val allExitTypes = FXCollections.observableArrayList(
+			ActivityType.values()
+				.filter { it !in arrayOf(ActivityType.UNKNOWN, ActivityType.END_PROCEDURE, ActivityType.PROCEDURE_RETURN) }
+				.map { it.name }
+		)
 
 		val folderField = TextField().apply {
 			isEditable = false
@@ -630,29 +640,33 @@ class RCrifLayoutTool : Application() {
 			padding = Insets(20.0)
 		}
 
-		/* Пустые выходы ST */
-		val emptyStExitsFirstColumn = TableColumn<DualParamRow, String>("Активность").apply {
+		/* Пустые выходы */
+		val emptyExitsFirstColumn = TableColumn<DualParamRow, String>("Активность").apply {
 			cellValueFactory = Callback { it.value.firstField }
 			isEditable = true
 		}
-		val emptyStExitsSecondColumn = TableColumn<DualParamRow, String>("BusinessRule").apply {
+		val emptyExitsSecondColumn = TableColumn<DualParamRow, String>("Выход").apply {
 			cellValueFactory = Callback { it.value.secondField }
 			isEditable = true
 		}
-		val emptyStExitsTableView = TableView<DualParamRow>().apply {
-			columns.setAll(emptyStExitsFirstColumn, emptyStExitsSecondColumn)
+		val emptyExitsTableView = TableView<DualParamRow>().apply {
+			columns.setAll(emptyExitsFirstColumn, emptyExitsSecondColumn)
 			isEditable = true
 		}
 		unusedBrColumn.prefWidthProperty().bind(unusedProcedureTableView.widthProperty().subtract(2))
-		val emptyStExitsButton = Button("Поиск").apply {
+		val emptyExitsComboBox = ComboBox(allExitTypes).apply {
+			isEditable = false
+		}
+		val ignoreFailedCheckbox = CheckBox("Игнорировать Failed выходы")
+		val emptyExitsButton = Button("Поиск").apply {
 			setOnAction {
-				emptyStExitsTableView.items.setAll(searchEmptyStExits().map {
+				emptyExitsTableView.items.setAll(searchEmptyExits(emptyExitsComboBox.value, ignoreFailedCheckbox.isSelected).map {
 					DualParamRow(SimpleStringProperty(it.first), SimpleStringProperty(it.second))
 				})
 			}
 		}
-		val emptyStExitsBox = VBox(
-			10.0, emptyStExitsButton, emptyStExitsTableView
+		val emptyExitsBox = VBox(
+			10.0, HBox(5.0, emptyExitsComboBox, ignoreFailedCheckbox, emptyExitsButton), emptyExitsTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -831,7 +845,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Неиспользуемые активности", unusedActivitiesBox).apply { isClosable = false },
 			Tab("Нелатинские названия", invalidCharactersBox).apply { isClosable = false },
 			Tab("Неправильные названия", invalidNamingBox).apply { isClosable = false },
-			Tab("Пустые выходы ST", emptyStExitsBox).apply { isClosable = false },
+			Tab("Пустые выходы", emptyExitsBox).apply { isClosable = false },
 			Tab("Добавление связей", addingNewSplitHBox).apply { isClosable = false },
 		)
 
@@ -867,7 +881,7 @@ class RCrifLayoutTool : Application() {
 				val props = File(dir, "Properties.xml")
 				if (props.isFile) {
 					props.inputStream().use { input ->
-						mapper.readValue(input, ProcedureCallActivityDefinition::class.java)
+						mapper.readValue(input, ProcedureCall::class.java)
 					}
 				} else null
 			}
@@ -879,7 +893,7 @@ class RCrifLayoutTool : Application() {
 			.filter { it.isFile && it.name == "Properties.xml" }
 			.toList()
 			.map { file ->
-				file.inputStream().use { input -> mapper.readValue(input, ProcedureCallActivityDefinition::class.java) }
+				file.inputStream().use { input -> mapper.readValue(input, ProcedureCall::class.java) }
 			}
 			.filter { it.procedureToCall == selectedProcedure }
 
@@ -1487,10 +1501,11 @@ class RCrifLayoutTool : Application() {
 				if (!propsFile.exists()) {
 					return@mapNotNull null
 				}
-				val def = propsFile.inputStream().use { mapper.readValue(it, MappingActivityDefinition::class.java) }
-				val names = def.referredDocuments.items
-					.filter { it.access.equals("InOut", true) && it.referenceName in erasedNames }
-					.map { it.referenceName }
+				val def = propsFile.inputStream().use { mapper.readValue(it, DataMapping::class.java) }
+				val names = def.referredDocuments?.items
+					?.filter { it.access.equals("InOut", true) && it.referenceName in erasedNames }
+					?.map { it.referenceName }
+					?: emptyList()
 				xsltFile.parentFile.name to names
 			}
 			.toList()
@@ -1720,12 +1735,13 @@ class RCrifLayoutTool : Application() {
 			.toList()
 			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
 			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), Dispatch::class.java) }
-			.filter { dr -> dr.dispatchRuleIDs?.dispatchTest?.businessRuleID != null }
+			.filter { dr -> dr.dispatchRuleIDs?.dispatchTests?.any { it.businessRuleId != null } == true }
 
 		return allBrs
 			.minus(segmentationTrees.flatMap { st -> st.rules?.ruleList?.map { it.ruleID } ?: emptyList() }.toSet())
 			.minus(forms.flatMap { fm -> fm.exitTimeouts?.map { it.exitBusinessRules } ?: emptyList() }.toSet())
-			.minus(dispatches.map { dr -> dr.dispatchRuleIDs?.dispatchTest?.businessRuleID }.toSet())
+			.minus(dispatches.flatMap { dr -> dr.dispatchRuleIDs?.dispatchTests?.mapNotNull { it.businessRuleId } ?: emptyList() }
+				.toSet())
 	}
 
 
@@ -1815,6 +1831,7 @@ class RCrifLayoutTool : Application() {
 
 	private fun searchInvalidNaming(): List<Triple<String, String, String>> {
 		val regex = Regex("""ReferenceName\s*=\s*"([^"]+)"""")
+		val procedureNoRegex = Regex("^[A-Z]+_(\\d+)")
 
 		val mainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
 		val procedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
@@ -1824,25 +1841,31 @@ class RCrifLayoutTool : Application() {
 			.mapNotNull { file ->
 				val header = XmlReader.readXmlSafe(file).lines().first().replace("\uFEFF", "")
 				val match = regex.find(header)
-				val referenceName = match?.groupValues?.get(1)
-				val naming = when {
-					header.startsWith("<BizRuleActivityDefinition") -> Naming.BUSINESS_RULE
-					header.startsWith("<DataSourceActivityDefinition") -> Naming.DATA_SOURCE
-					header.startsWith("<DispatchActivityDefinition") -> Naming.DISPATCH
-					header.startsWith("<FormActivityDefinition") -> Naming.FORM
-					header.startsWith("<MappingActivityDefinition") -> Naming.DATA_MAPPING
-					header.startsWith("<ProcedureCallActivityDefinition") -> Naming.PROCEDURE_CALL
-					header.startsWith("<SegmentationTreeActivityDefinition") -> Naming.SEGMENTATION_TREE
-					header.startsWith("<SetValueActivityDefinition") -> Naming.SET_VALUE
-					header.startsWith("<WaitActivityDefinition") -> Naming.WAIT
-					header.startsWith("<ProcedureReturnActivityDefinition") -> Naming.PROCEDURE_RETURN
-					header.startsWith("<EndProcessActivityDefinition") -> Naming.END_PROCEDURE
-					header.startsWith("<SendEMailActivityDefinition") -> Naming.SEND_EMAIL
-					header.startsWith("<PhaseActivityDefinition") -> Naming.SET_PHASE
-					else -> Naming.UNKNOWN
+				val referenceName = match?.groupValues?.get(1)!!
+				val activityType = when {
+					header.startsWith("<BizRuleActivityDefinition") -> ActivityType.BIZ_RULE
+					header.startsWith("<DataSourceActivityDefinition") -> ActivityType.DATA_SOURCE
+					header.startsWith("<DispatchActivityDefinition") -> ActivityType.DISPATCH
+					header.startsWith("<FormActivityDefinition") -> ActivityType.FORM
+					header.startsWith("<MappingActivityDefinition") -> ActivityType.DATA_MAPPING
+					header.startsWith("<ProcedureCallActivityDefinition") -> ActivityType.PROCEDURE_CALL
+					header.startsWith("<SegmentationTreeActivityDefinition") -> ActivityType.SEGMENTATION_TREE
+					header.startsWith("<SetValueActivityDefinition") -> ActivityType.SET_VALUE
+					header.startsWith("<WaitActivityDefinition") -> ActivityType.WAIT
+					header.startsWith("<ProcedureReturnActivityDefinition") -> ActivityType.PROCEDURE_RETURN
+					header.startsWith("<EndProcessActivityDefinition") -> ActivityType.END_PROCEDURE
+					header.startsWith("<SendEMailActivityDefinition") -> ActivityType.SEND_EMAIL
+					header.startsWith("<PhaseActivityDefinition") -> ActivityType.SET_PHASE
+					else -> ActivityType.UNKNOWN
 				}
-				if (referenceName?.startsWith("${naming.prefix}_") == false) {
-					Triple(file.parentFile.parentFile.name, referenceName, naming.name)
+				val parentProcedureNo = if (file.parentFile.parentFile.name == "MainFlow") {
+					"0"
+				} else {
+					procedureNoRegex.find(file.parentFile.parentFile.name)?.groupValues?.get(1)
+				}
+				val procedureNo = procedureNoRegex.find(referenceName)?.groupValues?.get(1)
+				if (!referenceName.startsWith("${activityType.prefix}_") || procedureNo != parentProcedureNo) {
+					Triple(file.parentFile.parentFile.name, referenceName, activityType.name)
 				} else {
 					null
 				}
@@ -1851,20 +1874,11 @@ class RCrifLayoutTool : Application() {
 	}
 
 
-	private fun searchEmptyStExits(): List<Pair<String, String>> {
+	private fun searchEmptyExits(searchActivityType: String, ignoreFailed: Boolean): List<Pair<String, String>> {
 		val mapper = XmlMapper()
 
 		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
 		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
-
-		val segmentationTrees: List<Pair<SegmentationTree, File>> = (activitiesInMainFlow + activitiesInProcedures)
-			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-			.mapNotNull { xmlFile ->
-				val tree = mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java)
-				tree.rules?.let { tree to xmlFile }
-			}
-
-		val segmentationTreesReferenceNames = segmentationTrees.map { it.first.referenceName }
 
 		val layouts = (activitiesInMainFlow + activitiesInProcedures)
 			.filter { it.isFile && it.name.equals("Layout.xml", ignoreCase = true) }
@@ -1872,25 +1886,439 @@ class RCrifLayoutTool : Application() {
 
 		val result = mutableListOf<Pair<String, String>>()
 
-		layouts.forEach { layout ->
-			val elements =
-				layout.elements?.diagramElements?.filter { it.reference in segmentationTreesReferenceNames } ?: emptyList()
+		when (ActivityType.valueOf(searchActivityType)) {
+			ActivityType.FORM -> {
+				val forms = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<FormActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, Form::class.java) }
 
-			val usedExitRefs = layout.connections?.diagramConnections
-				?.flatMap { con -> con.endPoints?.points?.mapNotNull { it.exitPointRef } ?: emptyList() }
-				?.toSet() ?: emptySet()
+				val formNames = forms.map { it.referenceName }
 
-			segmentationTrees.forEach { (tree, propsFile) ->
-				if (elements.any { it.reference == tree.referenceName }) {
-					val allExits = (tree.rules?.ruleList?.map { it.connectionID }?.toSet() ?: emptySet()) + "AllFalse"
-					val notUsed = allExits - usedExitRefs
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in formNames } ?: emptyList()
 
-					result += notUsed.map { propsFile.parentFile.name to it }
+					forms.forEach { fm ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == fm.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == fm.referenceName }) {
+							val allExits = fm.commands?.activityCommands
+								?.filter { it.clazz != "BuiltIn" }
+								?.map { it.value }
+								?.toSet()
+								?.plus(ActivityType.FORM.exits)
+								?: emptySet()
+							val notUsed = allExits - usedExitRefs
+							result += notUsed.map { fm.referenceName to (it ?: "") }
+						}
+					}
 				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.BIZ_RULE -> {
+				val bizRules = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<BizRuleActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, BizRule::class.java) }
+
+				val bizRuleNames = bizRules.map { it.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in bizRuleNames } ?: emptyList()
+
+					bizRules.forEach { br ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == br.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == br.referenceName }) {
+							val notUsed = ActivityType.BIZ_RULE.exits - usedExitRefs
+							result += notUsed.map { br.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.SEGMENTATION_TREE -> {
+				val segmentationTrees = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<SegmentationTreeActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, SegmentationTree::class.java) }
+
+				val segmentationTreesReferenceNames = segmentationTrees.map { it.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in segmentationTreesReferenceNames } ?: emptyList()
+
+					segmentationTrees.forEach { st ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == st.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == st.referenceName }) {
+							val allExits = st.rules?.ruleList
+								?.map { it.connectionID }
+								?.toSet()
+								?.plus(ActivityType.SEGMENTATION_TREE.exits)
+								?: emptySet()
+							val notUsed = allExits - usedExitRefs
+							result += notUsed.map { st.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.DATA_SOURCE -> {
+				val dataSources = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<DataSourceActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, DataSource::class.java) }
+
+				val dsNames = dataSources.map { it.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in dsNames } ?: emptyList()
+
+					dataSources.forEach { br ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == br.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == br.referenceName }) {
+							val notUsed = ActivityType.DATA_SOURCE.exits - usedExitRefs
+							result += notUsed.map { br.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.DATA_MAPPING -> {
+				val dataMappings = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<MappingActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, DataMapping::class.java) }
+
+				val dmNames = dataMappings.map { it.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in dmNames } ?: emptyList()
+
+					dataMappings.forEach { br ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == br.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == br.referenceName }) {
+							val notUsed = ActivityType.DATA_MAPPING.exits - usedExitRefs
+							result += notUsed.map { br.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.SET_VALUE -> {
+				val setValueActivities = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<SetValueActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, SetValueActivity::class.java) }
+
+				val setValueNames = setValueActivities.map { it.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in setValueNames } ?: emptyList()
+
+					setValueActivities.forEach { br ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == br.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == br.referenceName }) {
+							val notUsed = ActivityType.SET_VALUE.exits - usedExitRefs
+							result += notUsed.map { br.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.PROCEDURE_CALL -> {
+				val procedures = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.mapNotNull { file ->
+						val xml = XmlReader.readXmlSafe(file)
+						if (xml.startsWith("<ProcedureCallActivityDefinition")) {
+							mapper.readValue(xml, ProcedureCall::class.java) to file
+						} else {
+							null
+						}
+					}
+
+				val segmentationTreesReferenceNames = procedures.map { it.first.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in segmentationTreesReferenceNames } ?: emptyList()
+
+					procedures.forEach { (procedure, file) ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == procedure.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == procedure.referenceName }) {
+							val allExits = File("${selectedDirectory}/Procedures/${procedure.procedureToCall}/Layout.xml")
+								.let { XmlReader.readXmlSafe(it) }
+								.let { mapper.readValue(it, DiagramLayout::class.java) }
+								.exits?.values
+								?: emptyList()
+							val notUsed = allExits - usedExitRefs
+							result += notUsed.map { procedure.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.DISPATCH -> {
+				val dispatches = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<DispatchActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, Dispatch::class.java) }
+
+				val dispatchNames = dispatches.map { it.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in dispatchNames } ?: emptyList()
+
+					dispatches.forEach { br ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == br.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == br.referenceName }) {
+							val notUsed = ActivityType.DISPATCH.exits - usedExitRefs
+							result += notUsed.map { br.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.WAIT -> {
+				val waits = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<WaitActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, Wait::class.java) }
+
+				val waitNames = waits.map { it.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in waitNames } ?: emptyList()
+
+					waits.forEach { br ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == br.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == br.referenceName }) {
+							val notUsed = ActivityType.WAIT.exits - usedExitRefs
+							result += notUsed.map { br.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.SEND_EMAIL -> {
+				val sendEmails = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<SendEMailActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, SendEmail::class.java) }
+
+				val sendEmailNames = sendEmails.map { it.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in sendEmailNames } ?: emptyList()
+
+					sendEmails.forEach { br ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == br.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == br.referenceName }) {
+							val notUsed = ActivityType.SEND_EMAIL.exits - usedExitRefs
+							result += notUsed.map { br.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			ActivityType.SET_PHASE -> {
+				val setPhases = (activitiesInMainFlow + activitiesInProcedures)
+					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+					.map { XmlReader.readXmlSafe(it) }
+					.filter { it.startsWith("<PhaseActivityDefinition") }
+					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, SetPhase::class.java) }
+
+				val setPhaseNames = setPhases.map { it.referenceName }
+
+				layouts.forEach { layout ->
+					val elements = layout.elements?.diagramElements
+						?.filter { it.reference in setPhaseNames } ?: emptyList()
+
+					setPhases.forEach { br ->
+						val usedExitRefs = layout.connections?.diagramConnections
+							?.flatMap { con ->
+								con.endPoints?.points
+									?.filter {
+										con.endPoints.points
+											.mapNotNull { it.elementRef }
+											.contains(elements.firstOrNull { it.reference == br.referenceName }?.uid)
+									}
+									?.mapNotNull { it.exitPointRef }
+									?: emptyList()
+							}
+							?.toSet()
+							?: emptySet()
+						if (elements.any { it.reference == br.referenceName }) {
+							val notUsed = ActivityType.SET_PHASE.exits - usedExitRefs
+							result += notUsed.map { br.referenceName to it }
+						}
+					}
+				}
+
+				return result.filter { (_, exit) -> !ignoreFailed || exit != "Failed" }
+			}
+
+			else -> {
+				return listOf()
 			}
 		}
-
-		return result
 	}
 
 

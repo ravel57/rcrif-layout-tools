@@ -6,7 +6,7 @@ import java.nio.charset.Charset
 object XmlReader {
 
 	fun readXmlSafe(bytes: ByteArray): String {
-		return String(bytes, getEncoding(bytes))
+		return String(bytes, getEncoding(bytes)).removePrefix("\uFEFF")
 	}
 
 

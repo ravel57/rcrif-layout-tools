@@ -16,13 +16,18 @@ module ru.ravel.rcriflayouttool {
 
 	opens ru.ravel.rcriflayouttool to javafx.graphics, com.fasterxml.jackson.databind;
 	opens ru.ravel.rcriflayouttool.model.layout to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
-	opens ru.ravel.rcriflayouttool.model.procedureproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
-	opens ru.ravel.rcriflayouttool.model.connectorproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
-	opens ru.ravel.rcriflayouttool.model.mappingproperties to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.procedure to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.datasource to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.datamapping to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	opens ru.ravel.rcriflayouttool.model.segmentationtree to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml, kotlin.reflect;
 	opens ru.ravel.rcriflayouttool.model.form to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml, kotlin.reflect;
 	opens ru.ravel.rcriflayouttool.model.dispatch to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml, kotlin.reflect;
 	opens ru.ravel.rcriflayouttool.model.setvalue to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.bizrule to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.sendemail to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.setphase to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.wait to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.procedurereturn to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	exports ru.ravel.rcriflayouttool.util;
 	exports ru.ravel.rcriflayouttool;
 }

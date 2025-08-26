@@ -1,19 +1,15 @@
-package ru.ravel.rcriflayouttool.model.segmentationtree
+package ru.ravel.rcriflayouttool.model.setphase
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement
 
-
+@JacksonXmlRootElement(localName = "PhaseActivityDefinition")
 @JsonIgnoreProperties(ignoreUnknown = true)
-@JacksonXmlRootElement(localName = "SegmentationTreeActivityDefinition")
-data class SegmentationTree(
+data class SetPhase(
 	@JacksonXmlProperty(isAttribute = true, localName = "ReferenceName")
 	val referenceName: String,
 
 	@JacksonXmlProperty(localName = "Header")
-	val header: Header? = null,
-
-	@JacksonXmlProperty(localName = "Rules")
-	val rules: Rules? = null,
+	val header: Header? = null
 )

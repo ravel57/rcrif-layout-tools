@@ -1,13 +1,13 @@
-package ru.ravel.rcriflayouttool.model.form
+package ru.ravel.rcriflayouttool.model.wait
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlElementWrapper
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement
 
+
+@JacksonXmlRootElement(localName = "WaitActivityDefinition")
 @JsonIgnoreProperties(ignoreUnknown = true)
-@JacksonXmlRootElement(localName = "FormActivityDefinition")
-data class Form(
+data class Wait(
 	@JacksonXmlProperty(isAttribute = true, localName = "ReferenceName")
 	val referenceName: String,
 
@@ -20,13 +20,6 @@ data class Form(
 	@JacksonXmlProperty(localName = "ReferredDocuments")
 	val referredDocuments: ReferredDocuments? = null,
 
-	@JacksonXmlElementWrapper(useWrapping = false)
-	@JacksonXmlProperty(localName = "ExitTimeout")
-	val exitTimeouts: List<ExitTimeout>? = emptyList(),
-
-	@JacksonXmlProperty(localName = "UITemplate")
-	val uiTemplate: String? = null,
-
-	@JacksonXmlProperty(localName = "OnlyOneExitTimeOut")
-	val onlyOneExitTimeOut: Int? = null
+	@JacksonXmlProperty(localName = "WaitActivityDefinition")
+	val details: WaitDetails? = null
 )

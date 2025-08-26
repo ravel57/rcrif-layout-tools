@@ -5,8 +5,8 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty
 
 data class DispatchTest(
 	@JacksonXmlProperty(localName = "DispatchRuleID")
-	val dispatchRuleID: String? = null,
+	val dispatchRuleId: String? = null,
 
 	@JacksonXmlProperty(localName = "BusinessRuleID")
-	val businessRuleID: String? = null
+	val businessRuleId: String? = null
 )

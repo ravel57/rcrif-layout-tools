@@ -9,7 +9,7 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty
 data class DispatchRuleIDs(
 	@JacksonXmlElementWrapper(useWrapping = false)
 	@JacksonXmlProperty(localName = "DispatchRuleID")
-	val dispatchRuleID: List<String> = emptyList(),
+	val dispatchRuleIds: List<String>? = emptyList(),
 
 	@JacksonXmlProperty(localName = "UseUnassignedExit")
 	val useUnassignedExit: Boolean? = null,
@@ -17,6 +17,7 @@ data class DispatchRuleIDs(
 	@JacksonXmlProperty(localName = "UseFailExit")
 	val useFailExit: Boolean? = null,
 
+	@JacksonXmlElementWrapper(useWrapping = false)
 	@JacksonXmlProperty(localName = "DispatchTest")
-	var dispatchTest: DispatchTest? = null
+	val dispatchTests: List<DispatchTest>? = emptyList()
 )
