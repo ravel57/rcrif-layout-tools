@@ -28,6 +28,7 @@ import javafx.stage.DirectoryChooser
 import javafx.stage.Modality
 import javafx.stage.Stage
 import javafx.util.Callback
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.fxmisc.flowless.VirtualizedScrollPane
 import org.fxmisc.richtext.CodeArea
 import org.fxmisc.richtext.LineNumberFactory
@@ -51,6 +52,7 @@ import ru.ravel.rcriflayouttool.model.wait.Wait
 import ru.ravel.rcriflayouttool.util.GitUnit
 import ru.ravel.rcriflayouttool.util.XmlReader
 import java.io.File
+import java.io.FileOutputStream
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.Charset
@@ -103,6 +105,18 @@ class RCrifLayoutTool : Application() {
 				.filter { it !in arrayOf(ActivityType.UNKNOWN, ActivityType.END_PROCEDURE, ActivityType.PROCEDURE_RETURN) }
 				.map { it.name }
 		)
+
+		val newItem = MenuItem("Отчет").apply {
+			setOnAction {
+				reportToExcel()
+			}
+		}
+		val fileMenu = Menu("Файл").apply {
+			items.addAll(newItem)
+		}
+		val menuBar = MenuBar().apply {
+			menus.addAll(fileMenu)
+		}
 
 		val folderField = TextField().apply {
 			isEditable = false
@@ -852,10 +866,8 @@ class RCrifLayoutTool : Application() {
 		VBox.setVgrow(tabPane, Priority.ALWAYS)
 
 		val root = VBox(
-			10.0, folderChooserPanel, tabPane
-		).apply {
-			padding = Insets(20.0)
-		}
+			10.0, menuBar, folderChooserPanel, tabPane
+		)
 
 		stage.scene = Scene(root, 700.0, 500.0).apply {
 			javaClass.classLoader.getResource("diff.css")?.let {
@@ -1720,7 +1732,7 @@ class RCrifLayoutTool : Application() {
 		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
 
 		val segmentationTrees = (activitiesInMainFlow + activitiesInProcedures)
-			.filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
+			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
 			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java) }
 			.filter { br -> br.rules != null }
 			.distinct()
@@ -1742,6 +1754,20 @@ class RCrifLayoutTool : Application() {
 			.minus(forms.flatMap { fm -> fm.exitTimeouts?.map { it.exitBusinessRules } ?: emptyList() }.toSet())
 			.minus(dispatches.flatMap { dr -> dr.dispatchRuleIDs?.dispatchTests?.mapNotNull { it.businessRuleId } ?: emptyList() }
 				.toSet())
+	}
+
+
+	private fun searchUnusedProcedures(): List<String> {
+		val dir = selectedDirectory ?: return emptyList()
+		val files = File(dir, "Procedures").list() ?: arrayOf()
+		val result = mutableListOf<String>()
+		for (name in files) {
+			val acts = getProceduresActivities(name)
+			if (acts.isEmpty()) {
+				result.add(name)
+			}
+		}
+		return result
 	}
 
 
@@ -2412,6 +2438,149 @@ class RCrifLayoutTool : Application() {
 				w.write(xml)
 			}
 		}
+	}
+
+
+	private fun reportToExcel() {
+		val progressStage = Stage().apply {
+			initModality(Modality.APPLICATION_MODAL)
+			title = "Формирование отчета"
+		}
+		val progressBar = ProgressBar(0.0).apply { prefWidth = 300.0 }
+		val statusLabel = Label("Подготовка...")
+		val vbox = VBox(10.0, statusLabel, progressBar).apply { padding = Insets(20.0) }
+		progressStage.scene = Scene(vbox)
+		progressStage.show()
+
+		val task = object : Task<File>() {
+			override fun call(): File {
+				val workbook = XSSFWorkbook()
+
+				val steps: List<Pair<String, () -> Unit>> = listOf(
+					"Unused FO" to {
+						val sheet = workbook.createSheet("Unused FO")
+						val header = sheet.createRow(0)
+						header.createCell(0).setCellValue("FO")
+						searchUnusedFo().forEachIndexed { i, value ->
+							sheet.createRow(i + 1).createCell(0).setCellValue(value)
+						}
+					},
+					"Unused BR" to {
+						val sheet = workbook.createSheet("Unused BR")
+						val header = sheet.createRow(0)
+						header.createCell(0).setCellValue("BusinessRule")
+						searchUnusedBr().forEachIndexed { i, value ->
+							sheet.createRow(i + 1).createCell(0).setCellValue(value ?: "")
+						}
+					},
+					"Unused Procedures" to {
+						val sheet = workbook.createSheet("Unused Procedures")
+						val header = sheet.createRow(0)
+						header.createCell(0).setCellValue("Procedure")
+						searchUnusedProcedures().forEachIndexed { i, value ->
+							sheet.createRow(i + 1).createCell(0).setCellValue(value)
+						}
+					},
+					"Unused Activities" to {
+						val sheet = workbook.createSheet("Unused Activities")
+						val header = sheet.createRow(0)
+						header.createCell(0).setCellValue("Activity")
+						header.createCell(1).setCellValue("In Count")
+						header.createCell(2).setCellValue("Out Count")
+						searchUnusedActivities().forEachIndexed { i, value ->
+							val row = sheet.createRow(i + 1)
+							row.createCell(0).setCellValue(value.activity)
+							row.createCell(1).setCellValue(value.inCount.toDouble())
+							row.createCell(2).setCellValue(value.outCount.toDouble())
+						}
+					},
+					"Invalid Characters" to {
+						val sheet = workbook.createSheet("Invalid Characters")
+						val header = sheet.createRow(0)
+						header.createCell(0).setCellValue("Activity")
+						header.createCell(1).setCellValue("Value")
+						searchInvalidCharacters().forEachIndexed { i, value ->
+							val row = sheet.createRow(i + 1)
+							row.createCell(0).setCellValue(value.activity)
+							row.createCell(1).setCellValue(value.value)
+						}
+					},
+					"Erasures" to {
+						val sheet = workbook.createSheet("Erasures")
+						val header = sheet.createRow(0)
+						header.createCell(0).setCellValue("Procedure")
+						header.createCell(1).setCellValue("Names")
+						searchErasures().forEachIndexed { i, (proc, names) ->
+							val row = sheet.createRow(i + 1)
+							row.createCell(0).setCellValue(proc)
+							row.createCell(1).setCellValue(names.joinToString(", "))
+						}
+					},
+					"Invalid Naming" to {
+						val sheet = workbook.createSheet("Invalid Naming")
+						val header = sheet.createRow(0)
+						header.createCell(0).setCellValue("Procedure")
+						header.createCell(1).setCellValue("Wrong Name")
+						header.createCell(2).setCellValue("Type")
+						searchInvalidNaming().forEachIndexed { i, triple ->
+							val row = sheet.createRow(i + 1)
+							row.createCell(0).setCellValue(triple.first)
+							row.createCell(1).setCellValue(triple.second)
+							row.createCell(2).setCellValue(triple.third)
+						}
+					},
+					"Empty Exits" to {
+						val sheet = workbook.createSheet("Empty Exits")
+						val header = sheet.createRow(0)
+						header.createCell(0).setCellValue("Activity")
+						header.createCell(1).setCellValue("Exit")
+						ActivityType.values().flatMap { searchEmptyExits(it.name, false) }
+							.forEachIndexed { i, (act, exit) ->
+								val row = sheet.createRow(i + 1)
+								row.createCell(0).setCellValue(act)
+								row.createCell(1).setCellValue(exit)
+							}
+					}
+				)
+
+				for ((i, step) in steps.withIndex()) {
+					if (isCancelled) break
+					updateMessage("Формируется: ${step.first}")
+					step.second.invoke()
+					updateProgress(i + 1L, steps.size.toLong())
+				}
+
+				val file = File("report.xlsx")
+				FileOutputStream(file).use { workbook.write(it) }
+				workbook.close()
+				return file
+			}
+		}
+
+		progressBar.progressProperty().bind(task.progressProperty())
+		statusLabel.textProperty().bind(task.messageProperty())
+
+		task.setOnSucceeded {
+			progressStage.close()
+			val file = task.value
+			Alert(Alert.AlertType.INFORMATION).apply {
+				title = "Готово"
+				headerText = null
+				contentText = "Файл сохранен: ${file.absolutePath}"
+				showAndWait()
+			}
+		}
+		task.setOnFailed {
+			progressStage.close()
+			Alert(Alert.AlertType.ERROR).apply {
+				title = "Ошибка"
+				headerText = null
+				contentText = "Не удалось сформировать отчет: ${task.exception?.message}"
+				showAndWait()
+			}
+		}
+
+		Thread(task).apply { isDaemon = true }.start()
 	}
 
 

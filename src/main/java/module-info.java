@@ -12,6 +12,7 @@ module ru.ravel.rcriflayouttool {
 	requires org.eclipse.jgit;
 	requires com.fasterxml.jackson.kotlin;
 	requires java.xml;
+	requires org.apache.poi.ooxml;
 
 
 	opens ru.ravel.rcriflayouttool to javafx.graphics, com.fasterxml.jackson.databind;

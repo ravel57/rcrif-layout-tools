@@ -12,7 +12,7 @@ tasks.named('compileKotlin') {
 }
 
 group 'ru.ravel'
-version '0.11.1'
+version '0.12.1'
 
 repositories {
 	mavenCentral()
@@ -51,6 +51,8 @@ dependencies {
 	implementation 'io.github.java-diff-utils:java-diff-utils:4.16'
 
 	implementation 'org.eclipse.jgit:org.eclipse.jgit:7.3.0.202506031305-r'
+
+	implementation 'org.apache.poi:poi-ooxml:5.4.0'
 
 	testImplementation "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
 	testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitVersion}"
