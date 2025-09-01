@@ -11,6 +11,7 @@ import javafx.animation.PauseTransition
 import javafx.application.Application
 import javafx.application.Platform
 import javafx.beans.binding.Bindings
+import javafx.beans.property.ReadOnlyStringWrapper
 import javafx.beans.property.SimpleBooleanProperty
 import javafx.beans.property.SimpleObjectProperty
 import javafx.beans.property.SimpleStringProperty
@@ -99,8 +100,6 @@ class RCrifLayoutTool : Application() {
 		val filteredToNewSplit = FilteredList(allToNewSplit) { true }
 		val allFormExitsNewSplit = FXCollections.observableArrayList<String>()
 		val filteredFormExitsNewSplit = FilteredList(allFormExitsNewSplit) { true }
-		val allToNewExitsSplit = FXCollections.observableArrayList<String>()
-		val filteredToExitsNewSplit = FilteredList(allToNewExitsSplit) { true }
 
 		val allExitTypes = FXCollections.observableArrayList(
 			ActivityType.values()
@@ -714,6 +713,83 @@ class RCrifLayoutTool : Application() {
 			padding = Insets(20.0)
 		}
 
+		/* Комментарии */
+		val commentsColumn = TableColumn<CommentRow, String>("Комментарии").apply {
+			cellValueFactory = Callback { ReadOnlyStringWrapper(it.value.name) }
+			isEditable = false
+		}
+		val commentsTableView = TableView<CommentRow>().apply {
+			columns.setAll(commentsColumn)
+			isEditable = false
+		}
+		val commentCodeArea = CodeArea()
+		commentsTableView.setOnMouseClicked {
+			val selected = commentsTableView.selectionModel.selectedItem
+			if (selected != null) {
+				commentCodeArea.replaceText(selected.comment)
+			}
+		}
+		val commentsButton = Button("Поиск").apply {
+			setOnAction {
+				commentsTableView.items.setAll(searchComments())
+			}
+		}
+		val commentDeleteButton = Button("Удалить выбранный комментарий").apply {
+			setOnAction {
+				val selected = commentsTableView.selectionModel.selectedItem
+				if (selected != null) {
+					val file = selected.file
+					if (file.exists()) {
+						val bytes = file.readBytes()
+						val content = XmlReader.readXmlSafe(bytes)
+						val charset = XmlReader.getEncoding(bytes)
+						val regex = Regex("<!--(.*?)-->", RegexOption.DOT_MATCHES_ALL)
+						val matches = regex.findAll(content).toList()
+						val match = matches.find { it.value.contains(selected.comment.trim()) }
+						val newContent = if (match != null) {
+							content.removeRange(match.range)
+						} else {
+							content
+						}
+						writeXmlWithBom(file, newContent, charset)
+						commentsTableView.items.setAll(searchComments())
+					}
+				}
+			}
+		}
+		val commentDeleteAllButton = Button("Удалить все комментарии разом!").apply {
+			setOnAction {
+				commentsTableView.items
+					.map { it.file }
+					.distinct()
+					.forEach { file ->
+						if (file.exists()) {
+							val bytes = file.readBytes()
+							val content = XmlReader.readXmlSafe(bytes)
+							val charset = XmlReader.getEncoding(bytes)
+							val regex = Regex("<!--.*?-->", setOf(RegexOption.DOT_MATCHES_ALL))
+							val newContent = content.replace(regex, "")
+							writeXmlWithBom(file, newContent, charset)
+						}
+					}
+
+				// обновляем таблицу
+				commentsTableView.items.setAll(searchComments())
+			}
+		}
+		val rightBox = VBox(5.0, commentCodeArea, HBox(commentDeleteButton, commentDeleteAllButton)).apply {
+			VBox.setVgrow(commentCodeArea, Priority.ALWAYS)
+		}
+		val commentSplitPane = SplitPane().apply {
+			items.addAll(commentsTableView, rightBox)
+			setDividerPositions(0.5)
+		}
+		val commentsBox = VBox(
+			10.0, HBox(5.0, commentsButton), commentSplitPane
+		).apply {
+			padding = Insets(20.0)
+		}
+
 		/* Добавление связей */
 		val addingNewSplitComboBox = ComboBox(filteredAddingNewSplit).apply {
 			isEditable = true
@@ -890,6 +966,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Неправильные названия", invalidNamingBox).apply { isClosable = false },
 			Tab("Пустые выходы", emptyExitsBox).apply { isClosable = false },
 			Tab("Некорректные аттрибуты", invalidAttributesBox).apply { isClosable = false },
+			Tab("Комментарии", commentsBox).apply { isClosable = false },
 			Tab("Добавление связей", addingNewSplitHBox).apply { isClosable = false },
 		)
 
@@ -1734,9 +1811,13 @@ class RCrifLayoutTool : Application() {
 			.map { xmlFile -> xmlFile.nameWithoutExtension }
 
 		val foInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
-		val foInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
-		val allUsedFo = (foInMainFlow + foInProcedures)
 			.filter { it.isFile && it.name == "XForm.xml" }
+		val foInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+			.filter { it.isFile && it.name == "XForm.xml" }
+		val formObjects = File(selectedDirectory, "FormObjects").walkTopDown().toList()
+			.filter { it.isFile }
+
+		val allUsedFo = (foInMainFlow + foInProcedures + formObjects)
 			.flatMap { xmlFile ->
 				val text = XmlReader.readXmlSafe(xmlFile)
 				val matches = objectIDRegex.findAll(text).map { it.groupValues[1] }.toList()
@@ -2493,6 +2574,16 @@ class RCrifLayoutTool : Application() {
 	}
 
 
+	private fun writeXmlWithBom(file: File, text: String, charset: Charset) {
+		file.outputStream().use { os ->
+			writeBom(os, charset)
+			OutputStreamWriter(os, charset).use { w ->
+				w.write(text)
+			}
+		}
+	}
+
+
 	private fun reportToExcel() {
 		val progressStage = Stage().apply {
 			initModality(Modality.APPLICATION_MODAL)
@@ -2714,6 +2805,29 @@ class RCrifLayoutTool : Application() {
 		}
 
 		Thread(task).apply { isDaemon = true }.start()
+	}
+
+
+	private fun searchComments(): List<CommentRow> {
+		val regex = Regex("<!--(.*?)-->", setOf(RegexOption.DOT_MATCHES_ALL))
+
+		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+		val formObjects = File(selectedDirectory, "FormObjects").walkTopDown().toList()
+
+		val comments = (activitiesInMainFlow + activitiesInProcedures + formObjects)
+			.filter { it.isFile }
+			.flatMap { file ->
+				val input = XmlReader.readXmlSafe(file)
+				if (regex.find(input)?.groupValues?.isNotEmpty() == true) {
+					val allMatches = mutableListOf<String>()
+					regex.findAll(input).forEach { allMatches.add(it.groupValues[0]) }
+					return@flatMap allMatches.map { CommentRow("${file.parentFile.name}\\${file.name}", it, file) }
+				} else {
+					emptyList()
+				}
+			}
+		return comments
 	}
 
 
