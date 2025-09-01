@@ -56,12 +56,14 @@ import java.io.FileOutputStream
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.Charset
+import java.nio.file.Paths
 import java.time.Duration
 import java.util.*
 import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.regex.Pattern
+import kotlin.io.path.absolutePathString
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -685,6 +687,33 @@ class RCrifLayoutTool : Application() {
 			padding = Insets(20.0)
 		}
 
+		/* Некорректные аттрибуты */
+		val invalidAttributesFirstColumn = TableColumn<DualParamRow, String>("Активность").apply {
+			cellValueFactory = Callback { it.value.firstField }
+			isEditable = true
+		}
+		val invalidAttributesSecondColumn = TableColumn<DualParamRow, String>("Текст").apply {
+			cellValueFactory = Callback { it.value.secondField }
+			isEditable = true
+		}
+		val invalidAttributesTableView = TableView<DualParamRow>().apply {
+			columns.setAll(invalidAttributesFirstColumn, invalidAttributesSecondColumn)
+			isEditable = true
+		}
+		val invalidAttributesButton = Button("Поиск").apply {
+			setOnAction {
+				invalidAttributesTableView.items.setAll(
+					searchInvalidAttributes().map {
+						DualParamRow(SimpleStringProperty(it.first), SimpleStringProperty(it.second))
+					})
+			}
+		}
+		val invalidAttributesBox = VBox(
+			10.0, HBox(5.0, invalidAttributesButton), invalidAttributesTableView
+		).apply {
+			padding = Insets(20.0)
+		}
+
 		/* Добавление связей */
 		val addingNewSplitComboBox = ComboBox(filteredAddingNewSplit).apply {
 			isEditable = true
@@ -860,6 +889,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Нелатинские названия", invalidCharactersBox).apply { isClosable = false },
 			Tab("Неправильные названия", invalidNamingBox).apply { isClosable = false },
 			Tab("Пустые выходы", emptyExitsBox).apply { isClosable = false },
+			Tab("Некорректные аттрибуты", invalidAttributesBox).apply { isClosable = false },
 			Tab("Добавление связей", addingNewSplitHBox).apply { isClosable = false },
 		)
 
@@ -990,7 +1020,7 @@ class RCrifLayoutTool : Application() {
 	private fun getConnectorReferences(selectedProcess: String, selectedConnectorName: Any): List<String> {
 		return getAllConnectors(selectedProcess)
 			.filter { activity -> activity.connectorName == selectedConnectorName }
-			.map { activity -> activity.referenceName ?: "" }
+			.map { activity -> activity.referenceName }
 	}
 
 
@@ -2152,19 +2182,19 @@ class RCrifLayoutTool : Application() {
 					.mapNotNull { file ->
 						val xml = XmlReader.readXmlSafe(file)
 						if (xml.startsWith("<ProcedureCallActivityDefinition")) {
-							mapper.readValue(xml, ProcedureCall::class.java) to file
+							mapper.readValue(xml, ProcedureCall::class.java)
 						} else {
 							null
 						}
 					}
 
-				val segmentationTreesReferenceNames = procedures.map { it.first.referenceName }
+				val segmentationTreesReferenceNames = procedures.map { it.referenceName }
 
 				layouts.forEach { layout ->
 					val elements = layout.elements?.diagramElements
 						?.filter { it.reference in segmentationTreesReferenceNames } ?: emptyList()
 
-					procedures.forEach { (procedure, file) ->
+					procedures.forEach { procedure ->
 						val usedExitRefs = layout.connections?.diagramConnections
 							?.flatMap { con ->
 								con.endPoints?.points
@@ -2348,6 +2378,28 @@ class RCrifLayoutTool : Application() {
 	}
 
 
+	private fun searchInvalidAttributes(): List<Pair<String, String>> {
+		val regex = Regex("@\\s+[A-Za-z_][A-Za-z0-9_-]*")
+
+		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+
+		val invalidAttributes = (activitiesInMainFlow + activitiesInProcedures)
+			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
+			.flatMap { file ->
+				val input = XmlReader.readXmlSafe(file)
+				if (regex.find(input)?.groupValues?.isNotEmpty() == true) {
+					val allMatches = mutableListOf<String>()
+					regex.findAll(input).forEach { allMatches.add(it.groupValues[0]) }
+					return@flatMap allMatches.map { invalid -> Pair("${file.parentFile.name}\\${file.name}", invalid) }
+				} else {
+					emptyList()
+				}
+			}
+		return invalidAttributes
+	}
+
+
 	private fun commitComboValue(cb: ComboBox<String>, allItems: List<String>) {
 		val txt = cb.editor.text?.trim().orEmpty()
 		if (txt.isEmpty()) return
@@ -2456,37 +2508,64 @@ class RCrifLayoutTool : Application() {
 			override fun call(): File {
 				val workbook = XSSFWorkbook()
 
+				val headerFont = workbook.createFont().apply {
+					bold = true
+					fontHeightInPoints = 11
+					fontName = "Arial"
+				}
+				val headerStyle = workbook.createCellStyle().apply {
+					setFont(headerFont)
+				}
+
 				val steps: List<Pair<String, () -> Unit>> = listOf(
-					"Unused FO" to {
-						val sheet = workbook.createSheet("Unused FO")
+					"Неиспользуемые FO" to {
+						val sheet = workbook.createSheet("Неиспользуемые FO")
 						val header = sheet.createRow(0)
-						header.createCell(0).setCellValue("FO")
+						header.createCell(0).apply {
+							setCellValue("FormObject")
+							cellStyle = headerStyle
+						}
 						searchUnusedFo().forEachIndexed { i, value ->
 							sheet.createRow(i + 1).createCell(0).setCellValue(value)
 						}
 					},
-					"Unused BR" to {
-						val sheet = workbook.createSheet("Unused BR")
+					"Неиспользуемые BR" to {
+						val sheet = workbook.createSheet("Неиспользуемые BR")
 						val header = sheet.createRow(0)
-						header.createCell(0).setCellValue("BusinessRule")
+						header.createCell(0).apply {
+							setCellValue("BusinessRule")
+							cellStyle = headerStyle
+						}
 						searchUnusedBr().forEachIndexed { i, value ->
 							sheet.createRow(i + 1).createCell(0).setCellValue(value ?: "")
 						}
 					},
-					"Unused Procedures" to {
-						val sheet = workbook.createSheet("Unused Procedures")
+					"Неиспользуемые процедуры" to {
+						val sheet = workbook.createSheet("Неиспользуемые процедуры")
 						val header = sheet.createRow(0)
-						header.createCell(0).setCellValue("Procedure")
+						header.createCell(0).apply {
+							setCellValue("Процедура")
+							cellStyle = headerStyle
+						}
 						searchUnusedProcedures().forEachIndexed { i, value ->
 							sheet.createRow(i + 1).createCell(0).setCellValue(value)
 						}
 					},
-					"Unused Activities" to {
-						val sheet = workbook.createSheet("Unused Activities")
+					"Неиспользуемые активности" to {
+						val sheet = workbook.createSheet("Неиспользуемые активности")
 						val header = sheet.createRow(0)
-						header.createCell(0).setCellValue("Activity")
-						header.createCell(1).setCellValue("In Count")
-						header.createCell(2).setCellValue("Out Count")
+						header.createCell(0).apply {
+							setCellValue("Активность")
+							cellStyle = headerStyle
+						}
+						header.createCell(1).apply {
+							setCellValue("Количество входов")
+							cellStyle = headerStyle
+						}
+						header.createCell(2).apply {
+							setCellValue("Количество выходов")
+							cellStyle = headerStyle
+						}
 						searchUnusedActivities().forEachIndexed { i, value ->
 							val row = sheet.createRow(i + 1)
 							row.createCell(0).setCellValue(value.activity)
@@ -2494,34 +2573,55 @@ class RCrifLayoutTool : Application() {
 							row.createCell(2).setCellValue(value.outCount.toDouble())
 						}
 					},
-					"Invalid Characters" to {
-						val sheet = workbook.createSheet("Invalid Characters")
+					"Нелатинские названия" to {
+						val sheet = workbook.createSheet("Нелатинские названия")
 						val header = sheet.createRow(0)
-						header.createCell(0).setCellValue("Activity")
-						header.createCell(1).setCellValue("Value")
+						header.createCell(0).apply {
+							setCellValue("Активность")
+							cellStyle = headerStyle
+						}
+						header.createCell(1).apply {
+							setCellValue("Значение")
+							cellStyle = headerStyle
+						}
 						searchInvalidCharacters().forEachIndexed { i, value ->
 							val row = sheet.createRow(i + 1)
 							row.createCell(0).setCellValue(value.activity)
 							row.createCell(1).setCellValue(value.value)
 						}
 					},
-					"Erasures" to {
-						val sheet = workbook.createSheet("Erasures")
+					"Затирания" to {
+						val sheet = workbook.createSheet("Затирания")
 						val header = sheet.createRow(0)
-						header.createCell(0).setCellValue("Procedure")
-						header.createCell(1).setCellValue("Names")
+						header.createCell(0).apply {
+							setCellValue("Процедура")
+							cellStyle = headerStyle
+						}
+						header.createCell(1).apply {
+							setCellValue("Название")
+							cellStyle = headerStyle
+						}
 						searchErasures().forEachIndexed { i, (proc, names) ->
 							val row = sheet.createRow(i + 1)
 							row.createCell(0).setCellValue(proc)
 							row.createCell(1).setCellValue(names.joinToString(", "))
 						}
 					},
-					"Invalid Naming" to {
-						val sheet = workbook.createSheet("Invalid Naming")
+					"Неправильное название" to {
+						val sheet = workbook.createSheet("Неправильное название")
 						val header = sheet.createRow(0)
-						header.createCell(0).setCellValue("Procedure")
-						header.createCell(1).setCellValue("Wrong Name")
-						header.createCell(2).setCellValue("Type")
+						header.createCell(0).apply {
+							setCellValue("Процедура")
+							cellStyle = headerStyle
+						}
+						header.createCell(1).apply {
+							setCellValue("Неправильное название")
+							cellStyle = headerStyle
+						}
+						header.createCell(2).apply {
+							setCellValue("Тип активности")
+							cellStyle = headerStyle
+						}
 						searchInvalidNaming().forEachIndexed { i, triple ->
 							val row = sheet.createRow(i + 1)
 							row.createCell(0).setCellValue(triple.first)
@@ -2529,18 +2629,50 @@ class RCrifLayoutTool : Application() {
 							row.createCell(2).setCellValue(triple.third)
 						}
 					},
-					"Empty Exits" to {
-						val sheet = workbook.createSheet("Empty Exits")
+					"Пустые выходы" to {
+						val sheet = workbook.createSheet("Пустые выходы")
 						val header = sheet.createRow(0)
-						header.createCell(0).setCellValue("Activity")
-						header.createCell(1).setCellValue("Exit")
-						ActivityType.values().flatMap { searchEmptyExits(it.name, false) }
-							.forEachIndexed { i, (act, exit) ->
+						header.createCell(0).apply {
+							setCellValue("Активность")
+							cellStyle = headerStyle
+						}
+						header.createCell(1).apply {
+							setCellValue("Выход")
+							cellStyle = headerStyle
+						}
+						header.createCell(2).apply {
+							setCellValue("Тип")
+							cellStyle = headerStyle
+						}
+						ActivityType.values()
+							.flatMap {
+								val emptyExits = searchEmptyExits(it.name, false)
+								emptyExits.map { (act, exit) -> Triple(act, exit, it.name) }
+							}
+							.forEachIndexed { i, (act, exit, type) ->
 								val row = sheet.createRow(i + 1)
 								row.createCell(0).setCellValue(act)
 								row.createCell(1).setCellValue(exit)
+								row.createCell(2).setCellValue(type)
 							}
-					}
+					},
+					"Некорректные аттрибуты" to {
+						val sheet = workbook.createSheet("Некорректные аттрибуты")
+						val header = sheet.createRow(0)
+						header.createCell(0).apply {
+							setCellValue("Активность")
+							cellStyle = headerStyle
+						}
+						header.createCell(1).apply {
+							setCellValue("Текст")
+							cellStyle = headerStyle
+						}
+						searchInvalidAttributes().forEachIndexed { i, (act, str) ->
+							val row = sheet.createRow(i + 1)
+							row.createCell(0).setCellValue(act)
+							row.createCell(1).setCellValue(str)
+						}
+					},
 				)
 
 				for ((i, step) in steps.withIndex()) {
@@ -2550,7 +2682,7 @@ class RCrifLayoutTool : Application() {
 					updateProgress(i + 1L, steps.size.toLong())
 				}
 
-				val file = File("report.xlsx")
+				val file = File("${Paths.get("").absolutePathString()}/report.xlsx")
 				FileOutputStream(file).use { workbook.write(it) }
 				workbook.close()
 				return file
@@ -2577,6 +2709,7 @@ class RCrifLayoutTool : Application() {
 				headerText = null
 				contentText = "Не удалось сформировать отчет: ${task.exception?.message}"
 				showAndWait()
+				System.err.println(task.exception)
 			}
 		}
 
