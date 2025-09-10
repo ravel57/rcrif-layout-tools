@@ -51,7 +51,7 @@ import ru.ravel.rcriflayouttool.model.setphase.SetPhase
 import ru.ravel.rcriflayouttool.model.setvalue.SetValueActivity
 import ru.ravel.rcriflayouttool.model.wait.Wait
 import ru.ravel.rcriflayouttool.util.GitUnit
-import ru.ravel.rcriflayouttool.util.XmlReader
+import ru.ravel.rcriflayouttool.util.XmlUtil
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -330,7 +330,7 @@ class RCrifLayoutTool : Application() {
 							File(selectedDirectory, "Procedures/${newVal}/Layout.xml")
 						}
 						val text = file.let { f ->
-							XmlReader.readXmlSafe(f.takeIf { it.exists() })
+							XmlUtil.readXmlSafe(f.takeIf { it.exists() })
 						}
 						margeArea2.replaceText(text)
 						val previousFileVersion = GitUnit.getPreviousFileVersion(selectedDirectory!!, file.absolutePath)
@@ -741,8 +741,8 @@ class RCrifLayoutTool : Application() {
 					val file = selected.file
 					if (file.exists()) {
 						val bytes = file.readBytes()
-						val content = XmlReader.readXmlSafe(bytes)
-						val charset = XmlReader.getEncoding(bytes)
+						val content = XmlUtil.readXmlSafe(bytes)
+						val charset = XmlUtil.getEncoding(bytes)
 						val regex = Regex("<!--(.*?)-->", RegexOption.DOT_MATCHES_ALL)
 						val matches = regex.findAll(content).toList()
 						val match = matches.find { it.value.contains(selected.comment.trim()) }
@@ -765,8 +765,8 @@ class RCrifLayoutTool : Application() {
 					.forEach { file ->
 						if (file.exists()) {
 							val bytes = file.readBytes()
-							val content = XmlReader.readXmlSafe(bytes)
-							val charset = XmlReader.getEncoding(bytes)
+							val content = XmlUtil.readXmlSafe(bytes)
+							val charset = XmlUtil.getEncoding(bytes)
 							val regex = Regex("<!--.*?-->", setOf(RegexOption.DOT_MATCHES_ALL))
 							val newContent = content.replace(regex, "")
 							writeXmlWithBom(file, newContent, charset)
@@ -786,6 +786,33 @@ class RCrifLayoutTool : Application() {
 		}
 		val commentsBox = VBox(
 			10.0, HBox(5.0, commentsButton), commentSplitPane
+		).apply {
+			padding = Insets(20.0)
+		}
+
+		/* Неустановленные ДатаДоки */
+		val notSetDataDocsFirstColumn = TableColumn<DualParamRow, String>("Активность").apply {
+			cellValueFactory = Callback { it.value.firstField }
+			isEditable = true
+		}
+		val notSetDataDocsSecondColumn = TableColumn<DualParamRow, String>("DataDocument").apply {
+			cellValueFactory = Callback { it.value.secondField }
+			isEditable = true
+		}
+		val notSetDataDocsTableView = TableView<DualParamRow>().apply {
+			columns.setAll(notSetDataDocsFirstColumn, notSetDataDocsSecondColumn)
+			isEditable = true
+		}
+		val notSetDataDocsButton = Button("Поиск").apply {
+			setOnAction {
+				notSetDataDocsTableView.items.setAll(
+					searchNotSetDataDocs().map {
+						DualParamRow(SimpleStringProperty(it.first), SimpleStringProperty(it.second))
+					})
+			}
+		}
+		val notSetDataDocsBox = VBox(
+			10.0, HBox(5.0, notSetDataDocsButton), notSetDataDocsTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -967,6 +994,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Пустые выходы", emptyExitsBox).apply { isClosable = false },
 			Tab("Некорректные аттрибуты", invalidAttributesBox).apply { isClosable = false },
 			Tab("Комментарии", commentsBox).apply { isClosable = false },
+			Tab("Неустановленные ДатаДоки", notSetDataDocsBox).apply { isClosable = false },
 			Tab("Добавление связей", addingNewSplitHBox).apply { isClosable = false },
 		)
 
@@ -999,10 +1027,10 @@ class RCrifLayoutTool : Application() {
 			?.mapNotNull { dir ->
 				val props = File(dir, "Properties.xml")
 				if (props.isFile) {
-					props.inputStream().use { input ->
-						mapper.readValue(input, ProcedureCall::class.java)
-					}
-				} else null
+					props.inputStream().use { input -> mapper.readValue(input, ProcedureCall::class.java) }
+				} else {
+					null
+				}
 			}
 			?.filter { it.procedureToCall == selectedProcedure }
 			?: emptyList()
@@ -1159,7 +1187,7 @@ class RCrifLayoutTool : Application() {
 		area2: CodeArea,
 		prevBtn: Button,
 		nextBtn: Button,
-		diffProgress: ProgressIndicator
+		diffProgress: ProgressIndicator,
 	) {
 		diffProgress.visibleProperty().unbind()
 		diffProgress.visibleProperty().bind(
@@ -1570,7 +1598,7 @@ class RCrifLayoutTool : Application() {
 
 		val xsltAttributes = (mainFlow + procedures)
 			.filter { it.isFile && it.extension == "xslt" }
-			.filter { file -> xsltAttributeRegex.containsMatchIn(XmlReader.readXmlSafe(file)) }
+			.filter { file -> xsltAttributeRegex.containsMatchIn(XmlUtil.readXmlSafe(file)) }
 			.map { file -> file.parentFile.name }
 			.distinct()
 
@@ -1611,7 +1639,7 @@ class RCrifLayoutTool : Application() {
 		val result = (erasuresInMainFlow + erasuresInProcedures)
 			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
 			.mapNotNull { xsltFile ->
-				val text = commentRegex.replace(XmlReader.readXmlSafe(xsltFile), "")
+				val text = commentRegex.replace(XmlUtil.readXmlSafe(xsltFile), "")
 				if (!sameNameTemplateRegex.containsMatchIn(text)) return@mapNotNull null
 				val erasedNames = sameNameTemplateRegex.findAll(text)
 					.map { it.groupValues[1] }
@@ -1635,7 +1663,7 @@ class RCrifLayoutTool : Application() {
 
 	private fun padLinesForDiff(
 		left: List<String>,
-		right: List<String>
+		right: List<String>,
 	): Pair<List<String>, List<String>> {
 		fun List<String>.clean() = map { s ->
 			s.replace(ignoreAttrs) { m -> "${m.groupValues[1]}=\"\"" }
@@ -1819,7 +1847,7 @@ class RCrifLayoutTool : Application() {
 
 		val allUsedFo = (foInMainFlow + foInProcedures + formObjects)
 			.flatMap { xmlFile ->
-				val text = XmlReader.readXmlSafe(xmlFile)
+				val text = XmlUtil.readXmlSafe(xmlFile)
 				val matches = objectIDRegex.findAll(text).map { it.groupValues[1] }.toList()
 				matches
 			}
@@ -1836,7 +1864,7 @@ class RCrifLayoutTool : Application() {
 		val allBrs = File(selectedDirectory, "BusinessRules")
 			.walkTopDown()
 			.filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
-			.map { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), BusinessRule::class.java).businessRuleID }
+			.map { xmlFile -> mapper.readValue(XmlUtil.readXmlSafe(xmlFile), BusinessRule::class.java).businessRuleID }
 			.toList()
 
 		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
@@ -1844,20 +1872,20 @@ class RCrifLayoutTool : Application() {
 
 		val segmentationTrees = (activitiesInMainFlow + activitiesInProcedures)
 			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), SegmentationTree::class.java) }
+			.mapNotNull { xmlFile -> mapper.readValue(XmlUtil.readXmlSafe(xmlFile), SegmentationTree::class.java) }
 			.filter { br -> br.rules != null }
 			.distinct()
 			.toList()
 
 		val forms = (activitiesInMainFlow + activitiesInProcedures)
 			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), Form::class.java) }
+			.mapNotNull { xmlFile -> mapper.readValue(XmlUtil.readXmlSafe(xmlFile), Form::class.java) }
 			.filter { f -> f.exitTimeouts?.any { it.exitBusinessRules != null } == true }
 
 		val dispatches = (activitiesInMainFlow + activitiesInProcedures)
 			.toList()
 			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-			.mapNotNull { xmlFile -> mapper.readValue(XmlReader.readXmlSafe(xmlFile), Dispatch::class.java) }
+			.mapNotNull { xmlFile -> mapper.readValue(XmlUtil.readXmlSafe(xmlFile), Dispatch::class.java) }
 			.filter { dr -> dr.dispatchRuleIDs?.dispatchTests?.any { it.businessRuleId != null } == true }
 
 		return allBrs
@@ -1948,7 +1976,7 @@ class RCrifLayoutTool : Application() {
 		val result = (mainFlow + procedures)
 			.filter { it.isFile && it.extension == "xslt" }
 			.flatMap { file ->
-				val input = commentRegex.replace(XmlReader.readXmlSafe(file), "")
+				val input = commentRegex.replace(XmlUtil.readXmlSafe(file), "")
 				val allMatches = mutableListOf<String>()
 				tagRegex.findAll(input).forEach { allMatches.add(it.groupValues[1]) }
 				attrRegex.findAll(input).forEach { allMatches.add(it.groupValues[1]) }
@@ -1976,25 +2004,10 @@ class RCrifLayoutTool : Application() {
 		val result = (mainFlow + procedures)
 			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
 			.mapNotNull { file ->
-				val header = XmlReader.readXmlSafe(file).lines().first().replace("\uFEFF", "")
+				val header = XmlUtil.readXmlSafe(file).lines().first().replace("\uFEFF", "")
 				val match = regex.find(header)
 				val referenceName = match?.groupValues?.get(1)!!
-				val activityType = when {
-					header.startsWith("<BizRuleActivityDefinition") -> ActivityType.BIZ_RULE
-					header.startsWith("<DataSourceActivityDefinition") -> ActivityType.DATA_SOURCE
-					header.startsWith("<DispatchActivityDefinition") -> ActivityType.DISPATCH
-					header.startsWith("<FormActivityDefinition") -> ActivityType.FORM
-					header.startsWith("<MappingActivityDefinition") -> ActivityType.DATA_MAPPING
-					header.startsWith("<ProcedureCallActivityDefinition") -> ActivityType.PROCEDURE_CALL
-					header.startsWith("<SegmentationTreeActivityDefinition") -> ActivityType.SEGMENTATION_TREE
-					header.startsWith("<SetValueActivityDefinition") -> ActivityType.SET_VALUE
-					header.startsWith("<WaitActivityDefinition") -> ActivityType.WAIT
-					header.startsWith("<ProcedureReturnActivityDefinition") -> ActivityType.PROCEDURE_RETURN
-					header.startsWith("<EndProcessActivityDefinition") -> ActivityType.END_PROCEDURE
-					header.startsWith("<SendEMailActivityDefinition") -> ActivityType.SEND_EMAIL
-					header.startsWith("<PhaseActivityDefinition") -> ActivityType.SET_PHASE
-					else -> ActivityType.UNKNOWN
-				}
+				val activityType = getActivityType(header)
 				val parentProcedureNo = if (file.parentFile.parentFile.name == "MainFlow") {
 					"0"
 				} else {
@@ -2011,6 +2024,26 @@ class RCrifLayoutTool : Application() {
 	}
 
 
+	private fun getActivityType(header: String): ActivityType {
+		return when {
+			header.startsWith("<BizRuleActivityDefinition") -> ActivityType.BIZ_RULE
+			header.startsWith("<DataSourceActivityDefinition") -> ActivityType.DATA_SOURCE
+			header.startsWith("<DispatchActivityDefinition") -> ActivityType.DISPATCH
+			header.startsWith("<FormActivityDefinition") -> ActivityType.FORM
+			header.startsWith("<MappingActivityDefinition") -> ActivityType.DATA_MAPPING
+			header.startsWith("<ProcedureCallActivityDefinition") -> ActivityType.PROCEDURE_CALL
+			header.startsWith("<SegmentationTreeActivityDefinition") -> ActivityType.SEGMENTATION_TREE
+			header.startsWith("<SetValueActivityDefinition") -> ActivityType.SET_VALUE
+			header.startsWith("<WaitActivityDefinition") -> ActivityType.WAIT
+			header.startsWith("<ProcedureReturnActivityDefinition") -> ActivityType.PROCEDURE_RETURN
+			header.startsWith("<EndProcessActivityDefinition") -> ActivityType.END_PROCEDURE
+			header.startsWith("<SendEMailActivityDefinition") -> ActivityType.SEND_EMAIL
+			header.startsWith("<PhaseActivityDefinition") -> ActivityType.SET_PHASE
+			else -> ActivityType.UNKNOWN
+		}
+	}
+
+
 	private fun searchEmptyExits(searchActivityType: String, ignoreFailed: Boolean): List<Pair<String, String>> {
 		val mapper = XmlMapper()
 
@@ -2019,7 +2052,7 @@ class RCrifLayoutTool : Application() {
 
 		val layouts = (activitiesInMainFlow + activitiesInProcedures)
 			.filter { it.isFile && it.name.equals("Layout.xml", ignoreCase = true) }
-			.map { file -> mapper.readValue(XmlReader.readXmlSafe(file), DiagramLayout::class.java) }
+			.map { file -> mapper.readValue(XmlUtil.readXmlSafe(file), DiagramLayout::class.java) }
 
 		val result = mutableListOf<Pair<String, String>>()
 
@@ -2027,7 +2060,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.FORM -> {
 				val forms = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<FormActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, Form::class.java) }
 
@@ -2070,7 +2103,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.BIZ_RULE -> {
 				val bizRules = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<BizRuleActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, BizRule::class.java) }
 
@@ -2107,7 +2140,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.SEGMENTATION_TREE -> {
 				val segmentationTrees = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<SegmentationTreeActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, SegmentationTree::class.java) }
 
@@ -2149,7 +2182,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.DATA_SOURCE -> {
 				val dataSources = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<DataSourceActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, DataSource::class.java) }
 
@@ -2186,7 +2219,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.DATA_MAPPING -> {
 				val dataMappings = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<MappingActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, DataMapping::class.java) }
 
@@ -2223,7 +2256,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.SET_VALUE -> {
 				val setValueActivities = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<SetValueActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, SetValueActivity::class.java) }
 
@@ -2261,7 +2294,7 @@ class RCrifLayoutTool : Application() {
 				val procedures = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
 					.mapNotNull { file ->
-						val xml = XmlReader.readXmlSafe(file)
+						val xml = XmlUtil.readXmlSafe(file)
 						if (xml.startsWith("<ProcedureCallActivityDefinition")) {
 							mapper.readValue(xml, ProcedureCall::class.java)
 						} else {
@@ -2291,7 +2324,7 @@ class RCrifLayoutTool : Application() {
 							?: emptySet()
 						if (elements.any { it.reference == procedure.referenceName }) {
 							val allExits = File("${selectedDirectory}/Procedures/${procedure.procedureToCall}/Layout.xml")
-								.let { XmlReader.readXmlSafe(it) }
+								.let { XmlUtil.readXmlSafe(it) }
 								.let { mapper.readValue(it, DiagramLayout::class.java) }
 								.exits?.values
 								?: emptyList()
@@ -2307,7 +2340,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.DISPATCH -> {
 				val dispatches = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<DispatchActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, Dispatch::class.java) }
 
@@ -2344,7 +2377,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.WAIT -> {
 				val waits = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<WaitActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, Wait::class.java) }
 
@@ -2381,7 +2414,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.SEND_EMAIL -> {
 				val sendEmails = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<SendEMailActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, SendEmail::class.java) }
 
@@ -2418,7 +2451,7 @@ class RCrifLayoutTool : Application() {
 			ActivityType.SET_PHASE -> {
 				val setPhases = (activitiesInMainFlow + activitiesInProcedures)
 					.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
-					.map { XmlReader.readXmlSafe(it) }
+					.map { XmlUtil.readXmlSafe(it) }
 					.filter { it.startsWith("<PhaseActivityDefinition") }
 					.mapNotNull { xmlFile -> mapper.readValue(xmlFile, SetPhase::class.java) }
 
@@ -2468,7 +2501,7 @@ class RCrifLayoutTool : Application() {
 		val invalidAttributes = (activitiesInMainFlow + activitiesInProcedures)
 			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
 			.flatMap { file ->
-				val input = XmlReader.readXmlSafe(file)
+				val input = XmlUtil.readXmlSafe(file)
 				if (regex.find(input)?.groupValues?.isNotEmpty() == true) {
 					val allMatches = mutableListOf<String>()
 					regex.findAll(input).forEach { allMatches.add(it.groupValues[0]) }
@@ -2486,6 +2519,54 @@ class RCrifLayoutTool : Application() {
 		if (txt.isEmpty()) return
 		val match = allItems.firstOrNull { it.equals(txt, ignoreCase = true) }
 		cb.value = match
+	}
+
+
+	private fun searchNotSetDataDocs(): List<Pair<String, String>> {
+		val mapper = XmlMapper()
+
+		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+
+		val regex = File(selectedDirectory, "DataDocuments").walkTopDown()
+			.toList()
+			.filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
+			.map { file -> file.nameWithoutExtension }
+			.joinToString("|") { Regex.escape(it) }
+			.toRegex()
+
+		val result = (activitiesInMainFlow + activitiesInProcedures)
+			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
+			.flatMap { file ->
+				val dataDocsInactivity = regex.findAll(XmlUtil.readXmlSafe(file))
+					.map { it.value }
+					.toList()
+					.distinct()
+				val propertiesFile = File(file.parentFile, "Properties.xml")
+				val header = XmlUtil.readXmlSafe(propertiesFile).lines().first()
+				val type = getActivityType(header)
+				val referredDocuments = when (type) {
+					ActivityType.DATA_MAPPING -> {
+						val dataMapping = mapper.readValue(propertiesFile, DataMapping::class.java)
+						dataMapping.referredDocuments?.items?.map { it.referenceName }
+					}
+
+					ActivityType.DATA_SOURCE -> {
+						val dataMapping = mapper.readValue(propertiesFile, DataSource::class.java)
+						dataMapping.referredDocuments?.referredDocument?.map { it.referenceName }
+					}
+
+					else -> {
+						emptyList()
+					}
+				}
+				dataDocsInactivity
+					.filterNot { inactive ->
+						referredDocuments?.any { it.equals(inactive, ignoreCase = true) } == true
+					}
+					.map { file.parentFile.name to it }
+			}
+		return result
 	}
 
 
@@ -2517,21 +2598,20 @@ class RCrifLayoutTool : Application() {
 			?.first { el -> el.reference == to }
 			?.uid
 
-		diagramLayout.connections?.diagramConnections
-			?.add(
-				DiagramConnection(
-					uid = UUID.randomUUID().toString(),
-					splits = Splits(emptyList()),
-					endPoints = EndPoints(
-						listOf(
-							DiagramEndPoint(elementRef = fromUid, exitPointRef = fromExit),
-							DiagramEndPoint(elementRef = toUid, exitPointRef = toExit),
-						)
+		diagramLayout.connections?.diagramConnections?.add(
+			DiagramConnection(
+				uid = UUID.randomUUID().toString(),
+				splits = Splits(emptyList()),
+				endPoints = EndPoints(
+					listOf(
+						DiagramEndPoint(elementRef = fromUid, exitPointRef = fromExit),
+						DiagramEndPoint(elementRef = toUid, exitPointRef = toExit),
 					)
 				)
 			)
+		)
 
-		toPrettyXml(diagramLayout, layoutFile, XmlReader.getEncoding(layoutFile.readBytes()))
+		toPrettyXml(diagramLayout, layoutFile, XmlUtil.getEncoding(layoutFile.readBytes()))
 	}
 
 
@@ -2818,7 +2898,7 @@ class RCrifLayoutTool : Application() {
 		val comments = (activitiesInMainFlow + activitiesInProcedures + formObjects)
 			.filter { it.isFile }
 			.flatMap { file ->
-				val input = XmlReader.readXmlSafe(file)
+				val input = XmlUtil.readXmlSafe(file)
 				if (regex.find(input)?.groupValues?.isNotEmpty() == true) {
 					val allMatches = mutableListOf<String>()
 					regex.findAll(input).forEach { allMatches.add(it.groupValues[0]) }

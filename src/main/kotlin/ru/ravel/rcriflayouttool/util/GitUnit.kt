@@ -1,6 +1,7 @@
 package ru.ravel.rcriflayouttool.util
 
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import org.eclipse.jgit.treewalk.TreeWalk
 import org.eclipse.jgit.treewalk.filter.PathFilter
@@ -29,7 +30,7 @@ object GitUnit {
 		val repo = FileRepositoryBuilder().findGitDir(repoWorkTree).build()
 		repo.use { r ->
 			val rev = r.resolve(commitId) ?: return ""
-			val commit = org.eclipse.jgit.revwalk.RevWalk(r).use { it.parseCommit(rev) }
+			val commit = RevWalk(r).use { it.parseCommit(rev) }
 			val tree = commit.tree
 
 			TreeWalk(r).use { tw ->
@@ -39,7 +40,7 @@ object GitUnit {
 				while (tw.next()) {
 					if (tw.pathString == relPath) {
 						val bytes = r.open(tw.getObjectId(0)).bytes
-						return XmlReader.readXmlSafe(bytes)
+						return XmlUtil.readXmlSafe(bytes)
 					}
 				}
 			}

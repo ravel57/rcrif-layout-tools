@@ -3,7 +3,7 @@ package ru.ravel.rcriflayouttool.util
 import java.io.File
 import java.nio.charset.Charset
 
-object XmlReader {
+object XmlUtil {
 
 	fun readXmlSafe(bytes: ByteArray): String {
 		return String(bytes, getEncoding(bytes)).removePrefix("\uFEFF")
