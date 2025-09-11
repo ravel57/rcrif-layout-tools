@@ -1844,8 +1844,9 @@ class RCrifLayoutTool : Application() {
 			.filter { it.isFile && it.name == "XForm.xml" }
 		val formObjects = File(selectedDirectory, "FormObjects").walkTopDown().toList()
 			.filter { it.isFile }
+		val summary = listOf(File(selectedDirectory, "ApplicationSummary.xml"))
 
-		val allUsedFo = (foInMainFlow + foInProcedures + formObjects)
+		val allUsedFo = (foInMainFlow + foInProcedures + formObjects + summary)
 			.flatMap { xmlFile ->
 				val text = XmlUtil.readXmlSafe(xmlFile)
 				val matches = objectIDRegex.findAll(text).map { it.groupValues[1] }.toList()
@@ -2535,7 +2536,7 @@ class RCrifLayoutTool : Application() {
 			.joinToString("|") { Regex.escape(it) }
 			.toRegex()
 
-		val result = (activitiesInMainFlow + activitiesInProcedures)
+		val resultXslt = (activitiesInMainFlow + activitiesInProcedures)
 			.filter { it.isFile && it.extension.equals("xslt", ignoreCase = true) }
 			.flatMap { file ->
 				val dataDocsInactivity = regex.findAll(XmlUtil.readXmlSafe(file))
@@ -2566,7 +2567,30 @@ class RCrifLayoutTool : Application() {
 					}
 					.map { file.parentFile.name to it }
 			}
-		return result
+
+		val resultBr = (activitiesInMainFlow + activitiesInProcedures)
+			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+			.flatMap { file ->
+				val text = XmlUtil.readXmlSafe(file)
+				val type = getActivityType(text.lines().first())
+				if (type == ActivityType.BIZ_RULE) {
+					val br = mapper.readValue(text, BizRule::class.java)
+					val referredDocuments = br.referredDocuments?.referredDocuments?.map { it.referenceName }
+					val dataDocsInactivity = regex.findAll(br.xmlRule ?: "")
+						.map { it.value }
+						.toList()
+						.distinct()
+					dataDocsInactivity
+						.filterNot { inactive ->
+							referredDocuments?.any { it.equals(inactive, ignoreCase = true) } == true
+						}
+						.map { file.parentFile.name to it }
+				} else {
+					emptyList<Pair<String, String>>()
+				}
+			}
+
+		return (resultXslt + resultBr)
 	}
 
 
