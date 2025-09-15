@@ -2533,7 +2533,7 @@ class RCrifLayoutTool : Application() {
 			.toList()
 			.filter { it.isFile && it.extension.equals("xml", ignoreCase = true) }
 			.map { file -> file.nameWithoutExtension }
-			.joinToString("|") { Regex.escape(it) }
+			.joinToString("|") { "(?<![A-Za-z0-9_])${Regex.escape(it)}(?![A-Za-z0-9_])" }
 			.toRegex()
 
 		val resultXslt = (activitiesInMainFlow + activitiesInProcedures)
@@ -2868,6 +2868,23 @@ class RCrifLayoutTool : Application() {
 							row.createCell(1).setCellValue(str)
 						}
 					},
+					"Неустановленные ДатаДоки" to {
+						val sheet = workbook.createSheet("Неустановленные ДатаДоки")
+						val header = sheet.createRow(0)
+						header.createCell(0).apply {
+							setCellValue("Активность")
+							cellStyle = headerStyle
+						}
+						header.createCell(1).apply {
+							setCellValue("DataDoc")
+							cellStyle = headerStyle
+						}
+						searchNotSetDataDocs().forEachIndexed { i, (act, dd) ->
+							val row = sheet.createRow(i + 1)
+							row.createCell(0).setCellValue(act)
+							row.createCell(1).setCellValue(dd)
+						}
+					}
 				)
 
 				for ((i, step) in steps.withIndex()) {
