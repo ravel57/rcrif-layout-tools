@@ -50,6 +50,7 @@ import ru.ravel.rcriflayouttool.model.sendemail.SendEmail
 import ru.ravel.rcriflayouttool.model.setphase.SetPhase
 import ru.ravel.rcriflayouttool.model.setvalue.SetValueActivity
 import ru.ravel.rcriflayouttool.model.wait.Wait
+import ru.ravel.rcriflayouttool.util.CycleFinder
 import ru.ravel.rcriflayouttool.util.GitUnit
 import ru.ravel.rcriflayouttool.util.XmlUtil
 import java.io.File
@@ -817,6 +818,35 @@ class RCrifLayoutTool : Application() {
 			padding = Insets(20.0)
 		}
 
+		/** Зацикливания */
+		val loopsFirstColumn = TableColumn<ParamRow, String>("Цепочка").apply {
+			cellValueFactory = Callback { it.value.field }
+			isEditable = true
+		}
+//		val loopsSecondColumn = TableColumn<DualParamRow, String>("DataDocument").apply {
+//			cellValueFactory = Callback { it.value.secondField }
+//			isEditable = true
+//		}
+		val loopsTableView = TableView<ParamRow>().apply {
+			columns.setAll(loopsFirstColumn/*, loopsSecondColumn*/)
+			isEditable = true
+			VBox.setVgrow(this, Priority.ALWAYS)
+		}
+		val loopsButton = Button("Поиск").apply {
+			setOnAction {
+				loopsTableView.items.setAll(
+					searchLoops().map {
+						ParamRow(SimpleStringProperty(it))
+					})
+			}
+		}
+		val loopsBox = VBox(
+			10.0, HBox(5.0, loopsButton), loopsTableView
+		).apply {
+			padding = Insets(20.0)
+			VBox.setVgrow(loopsTableView, Priority.ALWAYS)
+		}
+
 		/* Добавление связей */
 		val addingNewSplitComboBox = ComboBox(filteredAddingNewSplit).apply {
 			isEditable = true
@@ -995,6 +1025,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Некорректные аттрибуты", invalidAttributesBox).apply { isClosable = false },
 			Tab("Комментарии", commentsBox).apply { isClosable = false },
 			Tab("Неустановленные ДатаДоки", notSetDataDocsBox).apply { isClosable = false },
+			Tab("Зацикливания", loopsBox).apply { isClosable = false },
 			Tab("Добавление связей", addingNewSplitHBox).apply { isClosable = false },
 		)
 
@@ -2591,6 +2622,21 @@ class RCrifLayoutTool : Application() {
 			}
 
 		return (resultXslt + resultBr)
+	}
+
+
+	private fun searchLoops(): List<String> {
+		val layoutMainFlow = File(File(selectedDirectory, "MainFlow"), "Layout.xml")
+		val layoutProcedures = File(selectedDirectory, "Procedures")
+			.walkTopDown()
+			.filter { it.isFile && it.name.equals("Layout.xml", ignoreCase = true) }
+			.toMutableList()
+			.apply { add(layoutMainFlow) }
+			.map { CycleFinder.findCycles(it) }
+			.filter { it.cycles.isNotEmpty() }
+			.flatMap { it.cycles }
+			.map { it.joinToString("\n -> ") }
+		return layoutProcedures
 	}
 
 
