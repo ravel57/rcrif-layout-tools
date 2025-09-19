@@ -2634,8 +2634,7 @@ class RCrifLayoutTool : Application() {
 			.apply { add(layoutMainFlow) }
 			.map { CycleFinder.findCycles(it) }
 			.filter { it.cycles.isNotEmpty() }
-			.flatMap { it.cycles }
-			.map { it.joinToString("\n -> ") }
+			.flatMap { CycleFinder.formatCycles(it) }
 		return layoutProcedures
 	}
 

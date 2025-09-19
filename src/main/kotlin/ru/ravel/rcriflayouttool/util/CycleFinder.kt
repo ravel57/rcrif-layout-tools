@@ -6,16 +6,26 @@ import java.io.File
 
 
 object CycleFinder {
+
+	data class Edge(
+		val from: String,
+		val to: String,
+		val exit: String,
+	)
+
 	data class Result(
-		val cycles: List<List<String>>,  // списки Reference из одной SCC/цикла
+		val cycles: List<List<String>>,
+		val edges: List<Edge>,
 		val totalNodes: Int,
 		val totalEdges: Int,
 	)
 
+
 	fun findCycles(file: File): Result {
 		val xmlMapper = XmlMapper()
 		val layout: DiagramLayout = xmlMapper.readValue(file, DiagramLayout::class.java)
-		// 1. UID -> Reference
+
+		// UID -> Reference
 		val uidToRef: Map<String, String> = layout.elements?.diagramElements
 			?.mapNotNull { el ->
 				val uid = el.uid
@@ -25,19 +35,28 @@ object CycleFinder {
 			?.toMap()
 			?: emptyMap()
 
-		// 2. Построение графа
+		// Граф соседей (для Тарьяна) и список рёбер (для вывода exit)
 		val graph = LinkedHashMap<String, MutableList<String>>()
+		val edges = mutableListOf<Edge>()
 		uidToRef.values.forEach { graph[it] = mutableListOf() }
 		var edgeCount = 0
+
 		layout.connections?.diagramConnections?.forEach { conn ->
-			val endPoints = conn.endPoints?.points ?: emptyList()
-			if (endPoints.size >= 2) {
-				val srcUid = endPoints[0].elementRef
-				val dstUid = endPoints[1].elementRef
-				val srcRef = srcUid?.let(uidToRef::get)
-				val dstRef = dstUid?.let(uidToRef::get)
+			val pts = conn.endPoints?.points ?: emptyList()
+			if (pts.size >= 2) {
+				val a = pts[0]
+				val b = pts[1]
+				// Обычно exitPointRef стоит на исходной точке → берём её источником
+				val srcEp = if (!a.exitPointRef.isNullOrBlank()) a else b
+				val dstEp = if (srcEp === a) b else a
+
+				val srcRef = srcEp.elementRef?.let(uidToRef::get)
+				val dstRef = dstEp.elementRef?.let(uidToRef::get)
+				val exit = srcEp.exitPointRef ?: ""
+
 				if (srcRef != null && dstRef != null) {
 					graph[srcRef]?.add(dstRef)
+					edges += Edge(srcRef, dstRef, exit)
 					edgeCount++
 				}
 			}
@@ -77,17 +96,31 @@ object CycleFinder {
 		}
 
 		graph.keys.forEach { if (!index.containsKey(it)) strongConnect(it) }
-		// 4. Фильтруем только циклы
-		val edgeSet = graph.entries
-			.flatMap { (u, vs) -> vs.map { v -> u to v } }
-			.toSet()
-		val cycles = sccs.filter {
-			it.size > 1 || (it.size == 1 && edgeSet.contains(it[0] to it[0]))
-		}
+
+		val edgeSet = edges.map { it.from to it.to }.toSet()
+		val cycles = sccs.filter { it.size > 1 || (it.size == 1 && edgeSet.contains(it[0] to it[0])) }
+
 		return Result(
 			cycles = cycles,
+			edges = edges,
 			totalNodes = graph.size,
 			totalEdges = edgeCount
 		)
+	}
+
+	fun formatCycles(res: Result): List<String> {
+		return res.cycles.map { cycle ->
+			buildString {
+				for (i in cycle.indices) {
+					val from = cycle[i]
+					val to = cycle[(i + 1) % cycle.size]
+					val exit = res.edges.find { it.from == from && it.to == to }?.exit ?: ""
+					append("$from --$exit--> $to")
+					if (i < cycle.size - 1) {
+						append("\n")
+					}
+				}
+			}
+		}
 	}
 }
