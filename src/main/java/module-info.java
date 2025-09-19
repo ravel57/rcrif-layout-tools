@@ -27,7 +27,7 @@ module ru.ravel.rcriflayouttool {
 	opens ru.ravel.rcriflayouttool.model.bizrule to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	opens ru.ravel.rcriflayouttool.model.sendemail to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	opens ru.ravel.rcriflayouttool.model.setphase to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
-	opens ru.ravel.rcriflayouttool.model.wait to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
+	opens ru.ravel.rcriflayouttool.model.wait to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml, kotlin.reflect;
 	opens ru.ravel.rcriflayouttool.model.procedurereturn to com.fasterxml.jackson.databind, com.fasterxml.jackson.dataformat.xml;
 	exports ru.ravel.rcriflayouttool.util;
 	exports ru.ravel.rcriflayouttool;

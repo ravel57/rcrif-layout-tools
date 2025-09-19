@@ -1,12 +1,15 @@
 package ru.ravel.rcriflayouttool.model.wait
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlElementWrapper
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty
+
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class WaitDetails(
+	@JacksonXmlElementWrapper(useWrapping = false)
 	@JacksonXmlProperty(localName = "ExitTimeout")
-	val exitTimeout: ExitTimeout? = null,
+	val exitTimeout: List<ExitTimeout>? = null,
 
 	@JacksonXmlProperty(localName = "UpdaterRoleID")
 	val updaterRoleId: String? = null,

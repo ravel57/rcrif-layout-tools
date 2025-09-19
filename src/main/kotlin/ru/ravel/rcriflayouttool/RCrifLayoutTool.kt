@@ -536,8 +536,8 @@ class RCrifLayoutTool : Application() {
 			padding = Insets(20.0)
 		}
 
-		/* Поиск неиспользуемых BR (ST + FM + DR) */
-		val unusedBrColumn = TableColumn<ParamRow, String>("Название BusinessRule (ST + FM + DR)").apply {
+		/* Поиск неиспользуемых BR (ST + FM + DR + WA) */
+		val unusedBrColumn = TableColumn<ParamRow, String>("Название BusinessRule (ST + FM + DR + WA)").apply {
 			cellValueFactory = Callback { it.value.field }
 			isEditable = true
 		}
@@ -1015,7 +1015,7 @@ class RCrifLayoutTool : Application() {
 			Tab("Поиск атрибутов", attributeBox).apply { isClosable = false },
 			Tab("Layout marge", margeBp).apply { isClosable = false },
 			Tab("Неиспользуемые FO", unusedFoBox).apply { isClosable = false },
-			Tab("Неиспользуемые BR в ST+FM+DR", unusedBrBox).apply { isClosable = false },
+			Tab("Неиспользуемые BR в ST+FM+DR+WA", unusedBrBox).apply { isClosable = false },
 			Tab("Неиспользуемые процедуры", unusedProcedureTabContent).apply { isClosable = false },
 			Tab("Поиск затираний", erasuresBox).apply { isClosable = false },
 			Tab("Неиспользуемые активности", unusedActivitiesBox).apply { isClosable = false },
@@ -1920,11 +1920,21 @@ class RCrifLayoutTool : Application() {
 			.mapNotNull { xmlFile -> mapper.readValue(XmlUtil.readXmlSafe(xmlFile), Dispatch::class.java) }
 			.filter { dr -> dr.dispatchRuleIDs?.dispatchTests?.any { it.businessRuleId != null } == true }
 
+		val waits = (activitiesInMainFlow + activitiesInProcedures)
+			.asSequence()
+			.filter { it.isFile && it.name.equals("Properties.xml", ignoreCase = true) }
+			.map { XmlUtil.readXmlSafe(it) }
+			.filter { xml -> xml.startsWith("<WaitActivityDefinition") }
+			.mapNotNull { xml -> mapper.readValue(xml, Wait::class.java) }
+			.filter { wa -> wa.details?.exitTimeout?.any { it.exitBusinessRules != null } == true }
+			.toList()
+
 		return allBrs
 			.minus(segmentationTrees.flatMap { st -> st.rules?.ruleList?.map { it.ruleID } ?: emptyList() }.toSet())
 			.minus(forms.flatMap { fm -> fm.exitTimeouts?.map { it.exitBusinessRules } ?: emptyList() }.toSet())
 			.minus(dispatches.flatMap { dr -> dr.dispatchRuleIDs?.dispatchTests?.mapNotNull { it.businessRuleId } ?: emptyList() }
 				.toSet())
+			.minus(waits.flatMap { wa -> wa.details?.exitTimeout?.mapNotNull { it.exitBusinessRules } ?: emptyList() }.toSet())
 	}
 
 
