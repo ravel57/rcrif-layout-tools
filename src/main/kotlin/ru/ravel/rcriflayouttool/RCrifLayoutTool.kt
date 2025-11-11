@@ -104,7 +104,13 @@ class RCrifLayoutTool : Application() {
 
 		val allExitTypes = FXCollections.observableArrayList(
 			ActivityType.values()
-				.filter { it !in arrayOf(ActivityType.UNKNOWN, ActivityType.END_PROCEDURE, ActivityType.PROCEDURE_RETURN) }
+				.filter {
+					it !in arrayOf(
+						ActivityType.UNKNOWN,
+						ActivityType.END_PROCEDURE,
+						ActivityType.PROCEDURE_RETURN
+					)
+				}
 				.map { it.name }
 		)
 
@@ -216,7 +222,10 @@ class RCrifLayoutTool : Application() {
 					folderField.text = selectedDirectory!!.absolutePath
 					saveSelectedPath(selectedDirectory!!.absolutePath)
 					allProcedures.setAll(File(selectedDirectory, "Procedures").list()?.sorted() ?: emptyList())
-					allConnectors.setAll(getAllConnectors(selectedDirectory!!.absolutePath).map { it.connectorName }.distinct())
+					allConnectors.setAll(
+						getAllConnectors(selectedDirectory!!.absolutePath)
+							.map { it.connectorName }
+							.distinct())
 					allMarge.setAll(
 						File(selectedDirectory, "Procedures").list()
 							?.sorted()
@@ -236,7 +245,9 @@ class RCrifLayoutTool : Application() {
 		}
 
 		val proceduresTabContent = VBox(
-			10.0, HBox(Label("Название процедуры:"), procedureComboBox).apply { padding = Insets(5.0) }, procedureTableView
+			10.0,
+			HBox(Label("Название процедуры:"), procedureComboBox).apply { padding = Insets(5.0) },
+			procedureTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -288,7 +299,9 @@ class RCrifLayoutTool : Application() {
 			}
 		}
 		val connectorsTabContent = VBox(
-			10.0, HBox(Label("Название коннектора:"), connectorsComboBox).apply { padding = Insets(5.0) }, connectorTableView
+			10.0,
+			HBox(Label("Название коннектора:"), connectorsComboBox).apply { padding = Insets(5.0) },
+			connectorTableView
 		).apply {
 			padding = Insets(20.0)
 		}
@@ -676,9 +689,13 @@ class RCrifLayoutTool : Application() {
 		val ignoreFailedCheckbox = CheckBox("Игнорировать Failed выходы")
 		val emptyExitsButton = Button("Поиск").apply {
 			setOnAction {
-				emptyExitsTableView.items.setAll(searchEmptyExits(emptyExitsComboBox.value, ignoreFailedCheckbox.isSelected).map {
-					DualParamRow(SimpleStringProperty(it.first), SimpleStringProperty(it.second))
-				})
+				emptyExitsTableView.items.setAll(
+					searchEmptyExits(
+						emptyExitsComboBox.value,
+						ignoreFailedCheckbox.isSelected
+					).map {
+						DualParamRow(SimpleStringProperty(it.first), SimpleStringProperty(it.second))
+					})
 			}
 		}
 		val emptyExitsBox = VBox(
@@ -819,29 +836,57 @@ class RCrifLayoutTool : Application() {
 		}
 
 		/** Зацикливания */
-		val loopsFirstColumn = TableColumn<ParamRow, String>("Цепочка").apply {
-			cellValueFactory = Callback { it.value.field }
+		val loopsFirstColumn = TableColumn<DualParamRow, String>("Цепочка").apply {
+			cellValueFactory = Callback { it.value.firstField }
 			isEditable = true
 		}
-//		val loopsSecondColumn = TableColumn<DualParamRow, String>("DataDocument").apply {
-//			cellValueFactory = Callback { it.value.secondField }
-//			isEditable = true
-//		}
-		val loopsTableView = TableView<ParamRow>().apply {
-			columns.setAll(loopsFirstColumn/*, loopsSecondColumn*/)
+		val loopsSecondColumn = TableColumn<DualParamRow, String>("Процедуры").apply {
+			cellValueFactory = Callback { it.value.secondField }
+			isEditable = true
+		}
+		val loopsTableView = TableView<DualParamRow>().apply {
+			columns.setAll(loopsFirstColumn, loopsSecondColumn)
 			isEditable = true
 			VBox.setVgrow(this, Priority.ALWAYS)
 		}
 		val loopsButton = Button("Поиск").apply {
 			setOnAction {
 				loopsTableView.items.setAll(
-					searchLoops().map {
-						ParamRow(SimpleStringProperty(it))
+					searchLoops().map { (chain, procedure) ->
+						DualParamRow(
+							SimpleStringProperty(chain),
+							SimpleStringProperty(procedure)
+						)
 					})
 			}
 		}
+		val aggregateButton = Button("Агрегировать").apply {
+			setOnAction {
+				val groupedProcedures = loopsTableView.items
+					.mapNotNull {
+						val regex = Regex("""^(\S+)\s*\*\s*(\d+)$""")
+						val text = it.secondField.value
+						val match = regex.find(text)
+						if (match != null) {
+							return@mapNotNull match.groupValues[1] to match.groupValues[2].toInt()
+						} else {
+							return@mapNotNull null
+						}
+					}
+					.groupBy { it.first }
+					.map { it.key to it.value.size }
+					.sortedBy { -it.second }
+					.map {
+						DualParamRow(
+							SimpleStringProperty(it.first),
+							SimpleStringProperty(it.second.toString())
+						)
+					}
+				showLoopsProceduresTableWindow(stage, groupedProcedures)
+			}
+		}
 		val loopsBox = VBox(
-			10.0, HBox(5.0, loopsButton), loopsTableView
+			10.0, HBox(5.0, loopsButton, aggregateButton), loopsTableView
 		).apply {
 			padding = Insets(20.0)
 			VBox.setVgrow(loopsTableView, Priority.ALWAYS)
@@ -1099,8 +1144,10 @@ class RCrifLayoutTool : Application() {
 				diagramLayout.flatMap { dl ->
 					dl.connections?.diagramConnections
 						?.map { dc ->
-							val exitName = dc.endPoints?.points?.firstOrNull { p -> p.elementRef == it.uid }?.exitPointRef ?: ""
-							val anotherUid = dc.endPoints?.points?.firstOrNull { p -> p.elementRef != exitName }?.elementRef ?: ""
+							val exitName =
+								dc.endPoints?.points?.firstOrNull { p -> p.elementRef == it.uid }?.exitPointRef ?: ""
+							val anotherUid =
+								dc.endPoints?.points?.firstOrNull { p -> p.elementRef != exitName }?.elementRef ?: ""
 							val toActivity = dl.elements?.diagramElements
 								?.firstOrNull { de -> de.uid == anotherUid }?.reference ?: ""
 							LayoutActivity(
@@ -1932,9 +1979,12 @@ class RCrifLayoutTool : Application() {
 		return allBrs
 			.minus(segmentationTrees.flatMap { st -> st.rules?.ruleList?.map { it.ruleID } ?: emptyList() }.toSet())
 			.minus(forms.flatMap { fm -> fm.exitTimeouts?.map { it.exitBusinessRules } ?: emptyList() }.toSet())
-			.minus(dispatches.flatMap { dr -> dr.dispatchRuleIDs?.dispatchTests?.mapNotNull { it.businessRuleId } ?: emptyList() }
+			.minus(dispatches.flatMap { dr ->
+				dr.dispatchRuleIDs?.dispatchTests?.mapNotNull { it.businessRuleId } ?: emptyList()
+			}
 				.toSet())
-			.minus(waits.flatMap { wa -> wa.details?.exitTimeout?.mapNotNull { it.exitBusinessRules } ?: emptyList() }.toSet())
+			.minus(waits.flatMap { wa -> wa.details?.exitTimeout?.mapNotNull { it.exitBusinessRules } ?: emptyList() }
+				.toSet())
 	}
 
 
@@ -2365,11 +2415,12 @@ class RCrifLayoutTool : Application() {
 							?.toSet()
 							?: emptySet()
 						if (elements.any { it.reference == procedure.referenceName }) {
-							val allExits = File("${selectedDirectory}/Procedures/${procedure.procedureToCall}/Layout.xml")
-								.let { XmlUtil.readXmlSafe(it) }
-								.let { mapper.readValue(it, DiagramLayout::class.java) }
-								.exits?.values
-								?: emptyList()
+							val allExits =
+								File("${selectedDirectory}/Procedures/${procedure.procedureToCall}/Layout.xml")
+									.let { XmlUtil.readXmlSafe(it) }
+									.let { mapper.readValue(it, DiagramLayout::class.java) }
+									.exits?.values
+									?: emptyList()
 							val notUsed = allExits - usedExitRefs
 							result += notUsed.map { procedure.referenceName to it }
 						}
@@ -2635,17 +2686,72 @@ class RCrifLayoutTool : Application() {
 	}
 
 
-	private fun searchLoops(): List<String> {
+	private fun searchLoops(): List<Pair<String, String>> {
 		val layoutMainFlow = File(File(selectedDirectory, "MainFlow"), "Layout.xml")
-		val layoutProcedures = File(selectedDirectory, "Procedures")
+		val cyclics = File(selectedDirectory, "Procedures")
 			.walkTopDown()
 			.filter { it.isFile && it.name.equals("Layout.xml", ignoreCase = true) }
 			.toMutableList()
 			.apply { add(layoutMainFlow) }
 			.map { CycleFinder.findCycles(it) }
 			.filter { it.cycles.isNotEmpty() }
-			.flatMap { CycleFinder.formatCycles(it) }
+			.map { it to findProceduresInCyclic(it) }
+		val layoutProcedures = cyclics.flatMap { (result, procs) ->
+			CycleFinder.formatCycles(result).map { formattedCycle ->
+				formattedCycle to procs
+			}
+		}
 		return layoutProcedures
+	}
+
+
+	private fun findProceduresInCyclic(result: CycleFinder.Result): String {
+		val mapper = XmlMapper()
+		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
+		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+		val procedures = (activitiesInMainFlow + activitiesInProcedures)
+			.filter { !it.isFile && it.name in result.cycles.flatMap { c -> c } }
+			.map { File(it, "Properties.xml") }
+			.filter { file ->
+				val header = XmlUtil.readXmlSafe(file).lines().first().replace("\uFEFF", "")
+				getActivityType(header) == ActivityType.PROCEDURE_CALL
+			}
+			.map { pc ->
+				val procedureCall = mapper.readValue(pc, ProcedureCall::class.java)
+				procedureCall.procedureToCall
+			}
+
+		return procedures
+			.groupBy { it }
+			.map { it.key to it.value.size }
+			.sortedBy { -it.second }
+			.joinToString("\n") { "${it.first} * ${it.second}" }
+	}
+
+
+	private fun showLoopsProceduresTableWindow(owner: Stage, items: List<DualParamRow>) {
+		val table = TableView<DualParamRow>()
+		val nameCol = TableColumn<DualParamRow, String>("Имя").apply {
+			prefWidth = 300.0
+			setCellValueFactory { cellData ->
+				cellData.value.firstField
+			}
+		}
+		val countCol = TableColumn<DualParamRow, String>("Количество").apply {
+			prefWidth = 120.0
+			setCellValueFactory { cellData ->
+				cellData.value.secondField
+			}
+		}
+		table.columns.addAll(nameCol, countCol)
+		table.items.addAll(items)
+		val window = Stage().apply {
+			title = "Таблица циклов"
+			initOwner(owner)
+			initModality(Modality.WINDOW_MODAL)
+			scene = Scene(VBox(table), 450.0, 300.0)
+		}
+		window.show()
 	}
 
 

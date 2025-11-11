@@ -12,7 +12,7 @@ tasks.named('compileKotlin') {
 }
 
 group 'ru.ravel'
-version '1.2.3'
+version '1.2.4'
 
 repositories {
 	mavenCentral()
@@ -20,6 +20,7 @@ repositories {
 
 ext {
 	junitVersion = '5.10.0'
+	javaFxVersion = '21.0.5'
 }
 
 
@@ -53,6 +54,11 @@ dependencies {
 	implementation 'org.eclipse.jgit:org.eclipse.jgit:7.3.0.202506031305-r'
 
 	implementation 'org.apache.poi:poi-ooxml:5.4.0'
+
+	implementation "org.openjfx:javafx-controls:${javaFxVersion}"
+	implementation "org.openjfx:javafx-fxml:${javaFxVersion}"
+	implementation "org.openjfx:javafx-graphics:${javaFxVersion}"
+	implementation "org.openjfx:javafx-base:${javaFxVersion}"
 
 	testImplementation "org.junit.jupiter:junit-jupiter-api:${junitVersion}"
 	testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junitVersion}"
@@ -98,4 +104,23 @@ jar {
 				'Main-Class': 'ru.ravel.rcriflayouttool.RCrifLayoutToolKt'
 		)
 	}
+}
+
+application {
+	mainClass = 'ru.ravel.rcriflayouttool.RCrifLayoutToolKt'
+}
+
+run {
+	def osName = org.gradle.internal.os.OperatingSystem.current()
+	def platform
+	if (osName.isWindows()) {
+		platform = 'win'
+	} else if (osName.isMacOsX()) {
+		platform = 'mac'
+	} else {
+		platform = 'linux'
+	}
+	jvmArgs = [
+			"--add-modules", "javafx.controls,javafx.fxml"
+	]
 }
