@@ -865,15 +865,18 @@ class RCrifLayoutTool : Application() {
 				val groupedProcedures = loopsTableView.items
 					.mapNotNull {
 						val regex = Regex("""^(\S+)\s*\*\s*(\d+)$""")
-						val text = it.secondField.value
-						val match = regex.find(text)
-						if (match != null) {
-							return@mapNotNull match.groupValues[1] to match.groupValues[2].toInt()
-						} else {
-							return@mapNotNull null
+						val texts = it.secondField.value.split("\n")
+						texts.map { text ->
+							val match = regex.find(text)
+							if (match != null) {
+								return@map match.groupValues[1] to match.groupValues[2].toInt()
+							} else {
+								return@map null
+							}
 						}
 					}
-					.groupBy { it.first }
+					.flatMap { it }
+					.groupBy { it?.first }
 					.map { it.key to it.value.size }
 					.sortedBy { -it.second }
 					.map {
@@ -2745,6 +2748,7 @@ class RCrifLayoutTool : Application() {
 		}
 		table.columns.addAll(nameCol, countCol)
 		table.items.addAll(items)
+		VBox.setVgrow(table, Priority.ALWAYS)
 		val window = Stage().apply {
 			title = "Таблица циклов"
 			initOwner(owner)
