@@ -2691,29 +2691,37 @@ class RCrifLayoutTool : Application() {
 
 	private fun searchLoops(): List<Pair<String, String>> {
 		val layoutMainFlow = File(File(selectedDirectory, "MainFlow"), "Layout.xml")
-		val cyclics = File(selectedDirectory, "Procedures")
+		val layouts = File(selectedDirectory, "Procedures")
 			.walkTopDown()
 			.filter { it.isFile && it.name.equals("Layout.xml", ignoreCase = true) }
 			.toMutableList()
 			.apply { add(layoutMainFlow) }
+		val results = layouts
 			.map { CycleFinder.findCycles(it) }
 			.filter { it.cycles.isNotEmpty() }
-			.map { it to findProceduresInCyclic(it) }
-		val layoutProcedures = cyclics.flatMap { (result, procs) ->
-			CycleFinder.formatCycles(result).map { formattedCycle ->
-				formattedCycle to procs
+
+		val rows = mutableListOf<Pair<String, String>>()
+
+		for (result in results) {
+			val formattedCycles = CycleFinder.formatCycles(result)
+			// result.cycles[i] ↔ formattedCycles[i]
+			for ((idx, cycleNodes) in result.cycles.withIndex()) {
+				val chainText = formattedCycles[idx]
+				val procsText = findProceduresForCycle(cycleNodes)
+				rows += chainText to procsText
 			}
 		}
-		return layoutProcedures
+		return rows
 	}
 
 
-	private fun findProceduresInCyclic(result: CycleFinder.Result): String {
+	private fun findProceduresForCycle(cycleNodes: List<String>): String {
 		val mapper = XmlMapper()
 		val activitiesInMainFlow = File(selectedDirectory, "MainFlow").walkTopDown().toList()
 		val activitiesInProcedures = File(selectedDirectory, "Procedures").walkTopDown().toList()
+		val nodeNames = cycleNodes.toSet()
 		val procedures = (activitiesInMainFlow + activitiesInProcedures)
-			.filter { !it.isFile && it.name in result.cycles.flatMap { c -> c } }
+			.filter { !it.isFile && it.name in nodeNames }
 			.map { File(it, "Properties.xml") }
 			.filter { file ->
 				val header = XmlUtil.readXmlSafe(file).lines().first().replace("\uFEFF", "")
@@ -2727,8 +2735,8 @@ class RCrifLayoutTool : Application() {
 		return procedures
 			.groupBy { it }
 			.map { it.key to it.value.size }
-			.sortedBy { -it.second }
-			.joinToString("\n") { "${it.first} * ${it.second}" }
+			.sortedByDescending { it.second }
+			.joinToString("\n") { (name, cnt) -> "$name * $cnt" }
 	}
 
 
